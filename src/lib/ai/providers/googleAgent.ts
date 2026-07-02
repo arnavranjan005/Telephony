@@ -9,13 +9,20 @@ import {
   ToolParameterSchema,
 } from "../types";
 
-// @google/genai ships as an ESM-only package; load it dynamically so this
-// CommonJS project can still `import` it for types without a require() crash.
+// @google/genai ships as an ESM-only package whose CJS "require" export
+// condition is itself broken, so requiring it (even lazily) resolves to an
+// empty object instead of throwing. TypeScript's commonjs output rewrites
+// `import()` into `require()`, which hits that bug - so we force a real
+// dynamic import via the Function constructor, which tsc cannot rewrite.
 type GenAIModule = typeof import("@google/genai");
+const dynamicImport = new Function("specifier", "return import(specifier)") as (
+  specifier: string
+) => Promise<GenAIModule>;
+
 let genaiModulePromise: Promise<GenAIModule> | null = null;
 function loadGenAiModule(): Promise<GenAIModule> {
   if (!genaiModulePromise) {
-    genaiModulePromise = import("@google/genai");
+    genaiModulePromise = dynamicImport("@google/genai");
   }
   return genaiModulePromise;
 }
