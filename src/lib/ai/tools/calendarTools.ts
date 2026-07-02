@@ -1,0 +1,79 @@
+import { ToolDefinition } from "../types";
+import { createAppointment, isSlotAvailable } from "../../google-calendar/calendarService";
+import { prisma } from "../../../config/prisma";
+
+export interface CalendarToolContext {
+  leadId?: string;
+  callId?: string;
+}
+
+/**
+ * Builds the calendar-related tool definitions the AI agent can call during a
+ * conversation. Bound to a specific call/lead so bookings made mid-call are
+ * automatically linked back to the right records.
+ */
+export function buildCalendarTools(context: CalendarToolContext): ToolDefinition[] {
+  const checkAvailability: ToolDefinition = {
+    name: "check_appointment_availability",
+    description: "Check whether a proposed appointment time slot is free on the calendar before booking it.",
+    parameters: {
+      type: "object",
+      properties: {
+        startTime: { type: "string", description: "ISO 8601 start datetime, e.g. 2025-01-15T14:00:00Z" },
+        endTime: { type: "string", description: "ISO 8601 end datetime, e.g. 2025-01-15T14:30:00Z" },
+      },
+      required: ["startTime", "endTime"],
+    },
+    handler: async (args) => {
+      const available = await isSlotAvailable(args.startTime as string, args.endTime as string);
+      return { available };
+    },
+  };
+
+  const scheduleAppointment: ToolDefinition = {
+    name: "schedule_appointment",
+    description:
+      "Book an appointment on the calendar for the current lead/caller. Only call this after confirming availability and getting the caller's verbal confirmation.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short title for the appointment" },
+        startTime: { type: "string", description: "ISO 8601 start datetime" },
+        endTime: { type: "string", description: "ISO 8601 end datetime" },
+        attendeeEmail: { type: "string", description: "Caller's email address, if known" },
+      },
+      required: ["title", "startTime", "endTime"],
+    },
+    handler: async (args) => {
+      const startTime = args.startTime as string;
+      const endTime = args.endTime as string;
+
+      const available = await isSlotAvailable(startTime, endTime);
+      if (!available) {
+        return { booked: false, reason: "Slot is no longer available" };
+      }
+
+      const event = await createAppointment({
+        summary: args.title as string,
+        startTime,
+        endTime,
+        attendeeEmail: args.attendeeEmail as string | undefined,
+      });
+
+      const appointment = await prisma.appointment.create({
+        data: {
+          title: args.title as string,
+          startTime: new Date(startTime),
+          endTime: new Date(endTime),
+          googleEventId: event.eventId,
+          leadId: context.leadId,
+          callId: context.callId,
+        },
+      });
+
+      return { booked: true, appointmentId: appointment.id, calendarEventId: event.eventId };
+    },
+  };
+
+  return [checkAvailability, scheduleAppointment];
+}

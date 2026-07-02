@@ -1,0 +1,123 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum LeadStatus {
+  COLD
+  WARM
+  HOT
+}
+
+enum CallDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum CallStatus {
+  QUEUED
+  INITIATED
+  RINGING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  NO_ANSWER
+  BUSY
+  CANCELED
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  CANCELED
+  COMPLETED
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+  TOOL
+}
+
+model Lead {
+  id          String   @id @default(cuid())
+  firstName   String?
+  lastName    String?
+  phoneNumber String   @unique
+  email       String?
+  status      LeadStatus @default(COLD)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  calls        Call[]
+  appointments Appointment[]
+
+  @@index([status])
+}
+
+model Call {
+  id                String        @id @default(cuid())
+  telnyxCallControlId String?     @unique
+  direction         CallDirection
+  status            CallStatus    @default(QUEUED)
+  fromNumber        String
+  toNumber          String
+  startedAt         DateTime?
+  endedAt           DateTime?
+  durationSeconds   Int?
+  outcome           String?
+  recordingUrl      String?
+
+  leadId   String?
+  lead     Lead?   @relation(fields: [leadId], references: [id])
+
+  messages     ConversationMessage[]
+  appointments Appointment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([leadId])
+  @@index([status])
+}
+
+model Appointment {
+  id                String            @id @default(cuid())
+  title             String
+  startTime         DateTime
+  endTime           DateTime
+  status            AppointmentStatus @default(SCHEDULED)
+  googleEventId     String?
+  notes             String?
+
+  leadId String?
+  lead   Lead?   @relation(fields: [leadId], references: [id])
+
+  callId String?
+  call   Call?   @relation(fields: [callId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([leadId])
+  @@index([startTime])
+}
+
+model ConversationMessage {
+  id        String      @id @default(cuid())
+  callId    String
+  call      Call        @relation(fields: [callId], references: [id], onDelete: Cascade)
+  role      MessageRole
+  content   String
+  toolName  String?
+  toolArgs  Json?
+  createdAt DateTime    @default(now())
+
+  @@index([callId])
+}
