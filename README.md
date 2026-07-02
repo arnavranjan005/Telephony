@@ -1,12 +1,13 @@
 # Telephony
 
-Initial scaffold for an AI voice calling platform: outbound/inbound calls via
-Telnyx, appointment booking via Google Calendar, a provider-agnostic AI agent
-with tool calling (Google Gemini by default), Prisma on Neon Postgres, a REST
-API, and Server-Sent Events for live call updates.
+AI voice calling platform: outbound/inbound calls via Telnyx, appointment
+booking via Google Calendar, a provider-agnostic AI agent with tool calling
+(Google Gemini by default), automated outbound campaigns and callback
+follow-ups, TCPA/DNC compliance, Prisma on Neon Postgres, a REST API, and
+Server-Sent Events for live call updates.
 
 This is a foundation to build on, not the full feature set described in the
-requirements doc (no campaigns, DNC list, analytics dashboard, or live audio
+requirements doc (no analytics dashboard or live bidirectional audio
 streaming yet — see "Not yet implemented" below).
 
 ## Stack
@@ -17,6 +18,8 @@ streaming yet — see "Not yet implemented" below).
 - Google Calendar API (OAuth2) for availability checks and booking
 - AI agent abstraction layer (`src/lib/ai`) with a Google Gemini implementation
 - Server-Sent Events for streaming call/conversation events to clients
+- In-process scheduler that drives campaign and follow-up dialing automatically
+- Global DNC (Do-Not-Call) list enforced on every outbound-dialing path
 
 ## Project layout
 
@@ -26,12 +29,14 @@ src/
   lib/ai/        provider-agnostic AIAgent interface, tool definitions, Google implementation
   lib/telnyx/    Telnyx client, call control actions, webhook signature verification
   lib/google-calendar/  OAuth client + calendar availability/booking service
+  lib/compliance/  DNC list service (isNumberOnDnc/addToDnc/removeFromDnc/listDnc)
   controllers/   request handlers
   routes/        Express routers
-  services/      call ↔ AI agent orchestration
+  services/      call ↔ AI agent orchestration, outbound dialing, campaigns, follow-ups, scheduler
   sse/           in-process event bus + SSE endpoint handler
   middleware/    error handling
-prisma/schema.prisma  Lead, Call, Appointment, ConversationMessage models
+prisma/schema.prisma  Lead, Call, Appointment, ConversationMessage, Campaign,
+                      CampaignContact, FollowUp, DncEntry models
 ```
 
 ## AI agent abstraction layer
@@ -82,6 +87,11 @@ and set that URL in the Telnyx portal.
 - `GET /api/calendar/busy?timeMin=&timeMax=` — free/busy lookup
 - `POST /api/calendar/appointments` `{ title, startTime, endTime, leadId?, callId?, attendeeEmail? }` — book directly via REST
 - `GET /api/appointments`, `GET /api/appointments/:id`, `POST /api/appointments/:id/cancel`
+- `POST /api/campaigns` `{ name, script?, contacts: [{ leadId? | phoneNumber, firstName?, lastName? }] }` — create a campaign (upserts leads from phone numbers)
+- `GET /api/campaigns`, `GET /api/campaigns/:id`, `POST /api/campaigns/:id/start`, `POST /api/campaigns/:id/pause` — the scheduler dials `PENDING` contacts of any `RUNNING` campaign automatically and marks it `COMPLETED` once none are left
+- `POST /api/followups` `{ leadId, scheduledAt, reason? }` — schedule a callback; the scheduler dials it automatically once due
+- `GET /api/followups`, `POST /api/followups/:id/cancel`
+- `GET /api/dnc`, `POST /api/dnc` `{ phoneNumber, reason? }`, `DELETE /api/dnc/:phoneNumber` — global Do-Not-Call list; every outbound dial (manual, campaign, or follow-up) is checked against it first
 
 ### Consuming the SSE stream
 
@@ -100,14 +110,33 @@ source.addEventListener("conversation.message", (e) => console.log(JSON.parse(e.
    the SSE bus, and speaks the final reply back on the call.
 4. `call.hangup` → marks the call completed.
 
+If the call belongs to a campaign contact, the campaign's `script` is appended to the AI agent's
+system prompt for that call. The agent also has `add_to_dnc` (adds the caller to the DNC list the
+moment they ask to stop being contacted) and `schedule_followup` (books an automatic callback)
+tools available on every call, alongside the calendar and lead tools.
+
+## Automated dialing (campaigns & follow-ups)
+
+`src/services/schedulerService.ts` runs an in-process `setInterval` loop (default: every 30s,
+started from `server.ts`) that:
+1. Dials any `FollowUp` whose `scheduledAt` has passed (`followUpService.dispatchDueFollowUps`).
+2. Dials `PENDING` contacts of any `RUNNING` `Campaign` (`campaignService.dispatchNextCampaignContacts`).
+
+Both dispatch through `src/services/outboundDialService.ts`, the single dialing path shared with the
+manual `POST /api/calls/outbound` endpoint — every outbound call, however it originates, checks the
+DNC list first and is skipped (marked `SKIPPED_DNC`) if the number is listed. No external job queue
+is used, in keeping with the "no recurring platform fees, self-hosted" requirement; if this ever
+needs to run across multiple instances, swap the interval loop for a real queue without touching the
+dispatch functions themselves.
+
 ## Not yet implemented
 
 The full requirements doc describes a much larger system. This scaffold intentionally leaves out:
-outbound campaign management, call scripts, callback/follow-up scheduling, DNC list + TCPA opt-out
-automation, sentiment analysis, analytics dashboard, and live bidirectional audio streaming (current
+sentiment analysis (detecting caller sentiment mid-call to trigger retention logic), an analytics
+dashboard (call/campaign/conversion metrics), and live bidirectional audio streaming (current
 inbound/outbound conversation flow uses Telnyx's transcription + TTS webhooks rather than raw media
-streaming). These fit into the same architecture — new routes/services/tools — and are natural
-next increments.
+streaming, and voice is whatever Telnyx's TTS provides — no custom paralinguistic fillers/pacing).
+These fit into the same architecture — new routes/services/tools — and are natural next increments.
 
 ## Scripts
 

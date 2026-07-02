@@ -44,6 +44,35 @@ enum MessageRole {
   TOOL
 }
 
+enum CampaignStatus {
+  DRAFT
+  RUNNING
+  PAUSED
+  COMPLETED
+}
+
+enum CampaignContactStatus {
+  PENDING
+  CALLING
+  CALLED
+  FAILED
+  SKIPPED_DNC
+}
+
+enum FollowUpStatus {
+  PENDING
+  CALLING
+  COMPLETED
+  FAILED
+  CANCELED
+  SKIPPED_DNC
+}
+
+enum DncSource {
+  MANUAL
+  CALLER_REQUEST
+}
+
 model Lead {
   id          String   @id @default(cuid())
   firstName   String?
@@ -55,8 +84,10 @@ model Lead {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  calls        Call[]
-  appointments Appointment[]
+  calls            Call[]
+  appointments     Appointment[]
+  campaignContacts CampaignContact[]
+  followUps        FollowUp[]
 
   @@index([status])
 }
@@ -77,8 +108,10 @@ model Call {
   leadId   String?
   lead     Lead?   @relation(fields: [leadId], references: [id])
 
-  messages     ConversationMessage[]
-  appointments Appointment[]
+  messages        ConversationMessage[]
+  appointments    Appointment[]
+  campaignContact CampaignContact?
+  followUps       FollowUp[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -120,4 +153,55 @@ model ConversationMessage {
   createdAt DateTime    @default(now())
 
   @@index([callId])
+}
+
+model Campaign {
+  id         String         @id @default(cuid())
+  name       String
+  script     String?
+  status     CampaignStatus @default(DRAFT)
+  fromNumber String?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  contacts CampaignContact[]
+
+  @@index([status])
+}
+
+model CampaignContact {
+  id          String                 @id @default(cuid())
+  campaignId  String
+  campaign    Campaign               @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  leadId      String
+  lead        Lead                   @relation(fields: [leadId], references: [id])
+  status      CampaignContactStatus  @default(PENDING)
+  callId      String?                @unique
+  call        Call?                  @relation(fields: [callId], references: [id])
+  attemptedAt DateTime?
+  createdAt   DateTime               @default(now())
+
+  @@index([campaignId, status])
+}
+
+model FollowUp {
+  id          String         @id @default(cuid())
+  leadId      String
+  lead        Lead           @relation(fields: [leadId], references: [id])
+  callId      String?
+  originCall  Call?          @relation(fields: [callId], references: [id])
+  reason      String?
+  scheduledAt DateTime
+  status      FollowUpStatus @default(PENDING)
+  createdAt   DateTime       @default(now())
+
+  @@index([status, scheduledAt])
+}
+
+model DncEntry {
+  id          String    @id @default(cuid())
+  phoneNumber String    @unique
+  reason      String?
+  source      DncSource @default(MANUAL)
+  createdAt   DateTime  @default(now())
 }

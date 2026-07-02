@@ -6,6 +6,9 @@ import callRoutes from "./routes/callRoutes";
 import leadRoutes from "./routes/leadRoutes";
 import appointmentRoutes from "./routes/appointmentRoutes";
 import calendarRoutes from "./routes/calendarRoutes";
+import campaignRoutes from "./routes/campaignRoutes";
+import followUpRoutes from "./routes/followUpRoutes";
+import dncRoutes from "./routes/dncRoutes";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 
 export function createApp() {
@@ -33,6 +36,9 @@ export function createApp() {
   app.use("/api/leads", leadRoutes);
   app.use("/api/appointments", appointmentRoutes);
   app.use("/api/calendar", calendarRoutes);
+  app.use("/api/campaigns", campaignRoutes);
+  app.use("/api/followups", followUpRoutes);
+  app.use("/api/dnc", dncRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

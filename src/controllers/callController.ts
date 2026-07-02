@@ -2,14 +2,9 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../config/prisma";
 import { verifyTelnyxSignature } from "../lib/telnyx/webhookVerifier";
-import {
-  answerCall,
-  decodeClientState,
-  initiateOutboundCall,
-  speakText,
-  startTranscription,
-} from "../lib/telnyx/callService";
+import { answerCall, decodeClientState, speakText, startTranscription } from "../lib/telnyx/callService";
 import { handleCallerUtterance } from "../services/callConversationService";
+import { placeOutboundCall } from "../services/outboundDialService";
 import { callEventBus } from "../sse/eventBus";
 import { CallStatus, CallDirection } from "@prisma/client";
 
@@ -26,28 +21,17 @@ export async function createOutboundCall(req: Request, res: Response) {
 
   const { toNumber, leadId } = parsed.data;
 
-  const call = await prisma.call.create({
-    data: {
-      direction: CallDirection.OUTBOUND,
-      status: CallStatus.QUEUED,
-      fromNumber: process.env.TELNYX_FROM_NUMBER ?? "",
-      toNumber,
-      leadId,
-    },
-  });
+  const result = await placeOutboundCall(toNumber, leadId);
 
-  const telnyxCall = await initiateOutboundCall(toNumber, { callId: call.id });
-
-  if (!telnyxCall.call_control_id) {
-    return res.status(502).json({ error: "Telnyx did not return a call_control_id" });
+  if (result.outcome === "skipped_dnc") {
+    return res.status(403).json({ error: "This number is on the Do-Not-Call list" });
+  }
+  if (result.outcome === "failed") {
+    return res.status(502).json({ error: result.error });
   }
 
-  const updated = await prisma.call.update({
-    where: { id: call.id },
-    data: { telnyxCallControlId: telnyxCall.call_control_id, status: CallStatus.INITIATED },
-  });
-
-  res.status(201).json({ call: updated });
+  const call = await prisma.call.findUnique({ where: { id: result.callId } });
+  res.status(201).json({ call });
 }
 
 export async function listCalls(_req: Request, res: Response) {
