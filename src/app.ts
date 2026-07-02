@@ -1,3 +1,7 @@
+// Must be imported before any routes are registered: patches Express so a
+// rejected promise/thrown error in an async route handler is forwarded to
+// the error middleware instead of silently hanging the request forever.
+import "express-async-errors";
 import express, { Request } from "express";
 import cors from "cors";
 import helmet from "helmet";

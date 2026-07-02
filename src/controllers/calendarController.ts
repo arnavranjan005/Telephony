@@ -1,7 +1,12 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { getAuthUrl, getOAuth2Client } from "../lib/google-calendar/googleCalendarClient";
-import { createAppointment, getBusySlots, isSlotAvailable } from "../lib/google-calendar/calendarService";
+import {
+  cancelAppointment as cancelGoogleEvent,
+  createAppointment,
+  getBusySlots,
+  isSlotAvailable,
+} from "../lib/google-calendar/calendarService";
 import { prisma } from "../config/prisma";
 
 export function getGoogleAuthUrl(_req: Request, res: Response) {
@@ -63,17 +68,28 @@ export async function bookAppointment(req: Request, res: Response) {
 
   const event = await createAppointment({ summary: title, startTime, endTime, attendeeEmail });
 
-  const appointment = await prisma.appointment.create({
-    data: {
-      title,
-      startTime: new Date(startTime),
-      endTime: new Date(endTime),
-      googleEventId: event.eventId,
-      leadId,
-      callId,
-      notes,
-    },
-  });
+  try {
+    const appointment = await prisma.appointment.create({
+      data: {
+        title,
+        startTime: new Date(startTime),
+        endTime: new Date(endTime),
+        googleEventId: event.eventId,
+        leadId,
+        callId,
+        notes,
+      },
+    });
 
-  res.status(201).json({ appointment, calendarEvent: event });
+    res.status(201).json({ appointment, calendarEvent: event });
+  } catch (error) {
+    // The Google event already exists at this point - without this, a DB
+    // failure here would leave an orphaned booking on the calendar that the
+    // app has no record of. Compensate by deleting it before failing the request.
+    await cancelGoogleEvent(event.eventId).catch((cancelError) => {
+      // eslint-disable-next-line no-console
+      console.error(`Failed to compensate orphaned Google Calendar event ${event.eventId}:`, cancelError);
+    });
+    throw error;
+  }
 }

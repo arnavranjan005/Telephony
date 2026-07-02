@@ -18,23 +18,27 @@ streaming yet — see "Not yet implemented" below).
 - Google Calendar API (OAuth2) for availability checks and booking
 - AI agent abstraction layer (`src/lib/ai`) with a Google Gemini implementation
 - Server-Sent Events for streaming call/conversation events to clients
-- In-process scheduler that drives campaign and follow-up dialing automatically
+- BullMQ on Redis (Aiven) — distributed job queue driving campaign and follow-up dialing, with a
+  separate horizontally-scalable worker process
 - Global DNC (Do-Not-Call) list enforced on every outbound-dialing path
 
 ## Project layout
 
 ```
 src/
-  config/        env loading (zod-validated) and the Prisma client singleton
+  config/        env loading (zod-validated), Prisma client singleton, Redis connection options
   lib/ai/        provider-agnostic AIAgent interface, tool definitions, Google implementation
   lib/telnyx/    Telnyx client, call control actions, webhook signature verification
   lib/google-calendar/  OAuth client + calendar availability/booking service
   lib/compliance/  DNC list service (isNumberOnDnc/addToDnc/removeFromDnc/listDnc)
   controllers/   request handlers
   routes/        Express routers
-  services/      call ↔ AI agent orchestration, outbound dialing, campaigns, follow-ups, scheduler
+  services/      call ↔ AI agent orchestration, outbound dialing, campaigns, follow-ups
+  queues/        BullMQ queue definitions + startup reconciliation sweep
   sse/           in-process event bus + SSE endpoint handler
   middleware/    error handling
+  server.ts      API process entry point
+  worker.ts      dial-queue worker process entry point (run separately, scales horizontally)
 prisma/schema.prisma  Lead, Call, Appointment, ConversationMessage, Campaign,
                       CampaignContact, FollowUp, DncEntry models
 ```
@@ -115,19 +119,64 @@ system prompt for that call. The agent also has `add_to_dnc` (adds the caller to
 moment they ask to stop being contacted) and `schedule_followup` (books an automatic callback)
 tools available on every call, alongside the calendar and lead tools.
 
-## Automated dialing (campaigns & follow-ups)
+## Automated dialing (campaigns & follow-ups) — distributed via BullMQ
 
-`src/services/schedulerService.ts` runs an in-process `setInterval` loop (default: every 30s,
-started from `server.ts`) that:
-1. Dials any `FollowUp` whose `scheduledAt` has passed (`followUpService.dispatchDueFollowUps`).
-2. Dials `PENDING` contacts of any `RUNNING` `Campaign` (`campaignService.dispatchNextCampaignContacts`).
+Dialing is driven by a BullMQ queue (`src/queues/dialQueue.ts`, one queue named `dial`) backed by
+Redis, consumed by a **separate worker process** (`src/worker.ts`) rather than the API process. This
+is what makes it a real distributed system: run as many worker instances as you want (e.g. scaled up
+during a campaign push), and none of them will double-dial the same row.
 
-Both dispatch through `src/services/outboundDialService.ts`, the single dialing path shared with the
-manual `POST /api/calls/outbound` endpoint — every outbound call, however it originates, checks the
-DNC list first and is skipped (marked `SKIPPED_DNC`) if the number is listed. No external job queue
-is used, in keeping with the "no recurring platform fees, self-hosted" requirement; if this ever
-needs to run across multiple instances, swap the interval loop for a real queue without touching the
-dispatch functions themselves.
+- **Producers**: `followUpService.createFollowUp` enqueues a delayed job (`delay = scheduledAt - now`);
+  `campaignService.startCampaign` enqueues one job per `PENDING` contact immediately. Every job uses a
+  **deterministic BullMQ job ID** (`followup:<id>` / `campaign-contact:<id>`), so re-enqueueing the
+  same row (e.g. from the reconciliation sweep below) is a no-op instead of a duplicate job.
+- **Consumer**: `src/worker.ts` runs a BullMQ `Worker` with a rate limiter
+  (`DIAL_RATE_LIMIT_MAX` jobs per `DIAL_RATE_LIMIT_DURATION_MS`, default 5/sec) so Telnyx never gets
+  bursted regardless of how many jobs land at once.
+- **Distributed consistency**: BullMQ's own per-job lock already stops two workers from processing the
+  same job concurrently, but the authoritative guard is a **database compare-and-swap** in
+  `followUpService.processFollowUpJob` / `campaignService.processCampaignContactJob` — an atomic
+  `updateMany({ where: { id, status: "PENDING" }, data: { status: "CALLING" } })`. Postgres row
+  locking guarantees only one caller ever sees `count === 1` for a given row, so even a job retried
+  after a worker crash, or a row re-enqueued by the reconciliation sweep, can never be dialed twice.
+- **Reconciliation**: on startup, `src/worker.ts` calls `reconcilePendingWork()`
+  (`src/queues/reconciliation.ts`), which re-enqueues every DB row still `PENDING` — safe because of
+  the deterministic job IDs above. This self-heals if Redis was flushed/evicted (a real possibility on
+  Aiven's free tier) or if rows were created while no worker was running; the database is the source
+  of truth, the queue is derived from it.
+- Both job types dial through `src/services/outboundDialService.ts`, the same path used by the manual
+  `POST /api/calls/outbound` endpoint — every outbound call, however it originates, checks the DNC
+  list first and is skipped (marked `SKIPPED_DNC`) if the number is listed.
+
+Run `npm run worker` (or `npm run start:worker` in prod) as its own process alongside `npm run dev`/
+`npm start` — the API and the dial worker are independently deployable and scalable.
+
+### Redis setup (Aiven free tier)
+
+1. Create a free Redis service on Aiven and copy its `rediss://` connection URI (includes
+   credentials; TLS is required on Aiven, and `rediss://` enables it automatically).
+2. Set `REDIS_URL` in `.env` to that URI.
+3. If you ever hit TLS certificate verification errors against a self-managed/non-standard CA, set
+   `REDIS_TLS_REJECT_UNAUTHORIZED=false` as an escape hatch — leave it `true` (default) otherwise.
+
+## Atomicity & consistency notes
+
+Most endpoints are a single Prisma write, which Postgres already makes atomic. The paths that combine
+multiple writes, or an external call plus a DB write, get explicit handling:
+
+- **`campaignService.createCampaign`** wraps the lead-upsert + contact-create loop in
+  `prisma.$transaction` — a campaign is created with either all of its contacts or none.
+- **`calendarController.bookAppointment`** creates the Google Calendar event, then the `Appointment`
+  row; if the DB write fails, it compensates by deleting the just-created Google event rather than
+  leaving an orphaned booking the app has no record of.
+- **Campaign completion** (`processCampaignContactJob`) and the **PENDING → CALLING claim** on both
+  `FollowUp` and `CampaignContact` are both conditional `updateMany` calls, so concurrent callers
+  never conflict — see the distributed-dialing section above.
+
+**Explicitly out of scope**: REST-level idempotency keys for retried client requests (e.g. a client
+timing out and retrying `POST /api/calls/outbound`) — that's a separate feature (needs an
+idempotency-key table) and isn't implicated by the distributed-worker double-dial risk this work
+targets. Worth a follow-up if duplicate client retries turn out to be a real problem.
 
 ## Not yet implemented
 

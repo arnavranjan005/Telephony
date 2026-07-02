@@ -1,8 +1,7 @@
 import { FollowUpStatus } from "@prisma/client";
 import { prisma } from "../config/prisma";
 import { placeOutboundCall } from "./outboundDialService";
-
-const DEFAULT_DISPATCH_LIMIT = 5;
+import { enqueueFollowUpDial } from "../queues/dialQueue";
 
 export interface CreateFollowUpInput {
   leadId: string;
@@ -12,7 +11,9 @@ export interface CreateFollowUpInput {
 }
 
 export async function createFollowUp(input: CreateFollowUpInput) {
-  return prisma.followUp.create({ data: input });
+  const followUp = await prisma.followUp.create({ data: input });
+  await enqueueFollowUpDial(followUp.id, followUp.scheduledAt);
+  return followUp;
 }
 
 export async function listFollowUps(status?: FollowUpStatus) {
@@ -28,36 +29,30 @@ export async function cancelFollowUp(id: string) {
 }
 
 /**
- * Dials every follow-up whose scheduledAt has passed, capped at `limit` per
- * call to avoid bursting Telnyx. Intended to be invoked periodically by the
- * scheduler service.
+ * Processes one follow-up dial job. Atomically claims the row
+ * (PENDING -> CALLING via a conditional UPDATE) before dialing, so if two
+ * workers race on the same row - or the reconciliation sweep re-enqueues a
+ * row something else already claimed - only one of them actually dials.
+ * Called by the worker; safe to call multiple times for the same id.
  */
-export async function dispatchDueFollowUps(limit: number = DEFAULT_DISPATCH_LIMIT): Promise<number> {
-  const due = await prisma.followUp.findMany({
-    where: { status: FollowUpStatus.PENDING, scheduledAt: { lte: new Date() } },
-    take: limit,
-    include: { lead: true },
+export async function processFollowUpJob(followUpId: string): Promise<void> {
+  const claimed = await prisma.followUp.updateMany({
+    where: { id: followUpId, status: FollowUpStatus.PENDING },
+    data: { status: FollowUpStatus.CALLING },
   });
+  if (claimed.count === 0) return; // already claimed, canceled, or completed elsewhere
 
-  let dispatched = 0;
-  for (const followUp of due) {
-    const result = await placeOutboundCall(followUp.lead.phoneNumber, followUp.leadId);
+  const followUp = await prisma.followUp.findUniqueOrThrow({ where: { id: followUpId }, include: { lead: true } });
+  const result = await placeOutboundCall(followUp.lead.phoneNumber, followUp.leadId);
 
-    if (result.outcome === "skipped_dnc") {
-      await prisma.followUp.update({ where: { id: followUp.id }, data: { status: FollowUpStatus.SKIPPED_DNC } });
-      continue;
-    }
-    if (result.outcome === "failed") {
-      await prisma.followUp.update({ where: { id: followUp.id }, data: { status: FollowUpStatus.FAILED } });
-      continue;
-    }
-
-    await prisma.followUp.update({
-      where: { id: followUp.id },
-      data: { status: FollowUpStatus.CALLING, callId: result.callId },
-    });
-    dispatched += 1;
+  if (result.outcome === "skipped_dnc") {
+    await prisma.followUp.update({ where: { id: followUpId }, data: { status: FollowUpStatus.SKIPPED_DNC } });
+    return;
+  }
+  if (result.outcome === "failed") {
+    await prisma.followUp.update({ where: { id: followUpId }, data: { status: FollowUpStatus.FAILED } });
+    return;
   }
 
-  return dispatched;
+  await prisma.followUp.update({ where: { id: followUpId }, data: { callId: result.callId } });
 }
