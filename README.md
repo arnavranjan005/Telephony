@@ -1,5 +1,7 @@
 # Telephony
 
+[![CI](https://github.com/arnavranjan005/Telephony/actions/workflows/ci.yml/badge.svg)](https://github.com/arnavranjan005/Telephony/actions/workflows/ci.yml)
+
 AI voice calling platform: outbound/inbound calls via Telnyx, appointment
 booking via Google Calendar, a provider-agnostic AI agent with tool calling
 (Google Gemini by default), automated outbound campaigns and callback
