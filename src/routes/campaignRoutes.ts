@@ -6,10 +6,11 @@ import {
   postPauseCampaign,
   postStartCampaign,
 } from "../controllers/campaignController";
+import { idempotency } from "../middleware/idempotency";
 
 const router = Router();
 
-router.post("/", postCampaign);
+router.post("/", idempotency, postCampaign);
 router.get("/", getCampaigns);
 router.get("/:campaignId", getCampaignById);
 router.post("/:campaignId/start", postStartCampaign);

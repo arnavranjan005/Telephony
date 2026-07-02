@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { getFollowUps, postCancelFollowUp, postFollowUp } from "../controllers/followUpController";
+import { idempotency } from "../middleware/idempotency";
 
 const router = Router();
 
-router.post("/", postFollowUp);
+router.post("/", idempotency, postFollowUp);
 router.get("/", getFollowUps);
 router.post("/:followUpId/cancel", postCancelFollowUp);
 

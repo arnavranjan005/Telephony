@@ -205,3 +205,21 @@ model DncEntry {
   source      DncSource @default(MANUAL)
   createdAt   DateTime  @default(now())
 }
+
+enum IdempotencyKeyStatus {
+  PENDING
+  COMPLETED
+}
+
+model IdempotencyKey {
+  id             String               @id @default(cuid())
+  key            String               @unique
+  method         String
+  path           String
+  requestHash    String
+  status         IdempotencyKeyStatus @default(PENDING)
+  responseStatus Int?
+  responseBody   Json?
+  createdAt      DateTime             @default(now())
+  completedAt    DateTime?
+}

@@ -73,4 +73,15 @@ describe("Appointment routes", () => {
     expect(res.status).toBe(404);
     expect(appointmentUpdate).not.toHaveBeenCalled();
   });
+
+  it("POST /api/appointments/:id/cancel is idempotent - repeating it on an already-canceled appointment does not re-call Google", async () => {
+    appointmentFindUnique.mockResolvedValue({ id: "appt_1", googleEventId: "evt_1", status: "CANCELED" });
+
+    const res = await request(app).post("/api/appointments/appt_1/cancel");
+
+    expect(res.status).toBe(200);
+    expect(res.body.appointment.status).toBe("CANCELED");
+    expect(cancelAppointmentEvent).not.toHaveBeenCalled();
+    expect(appointmentUpdate).not.toHaveBeenCalled();
+  });
 });
