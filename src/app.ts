@@ -1,3 +1,7 @@
+// Must be imported before any routes are registered: patches Express so a
+// rejected promise/thrown error in an async route handler is forwarded to
+// the error middleware instead of silently hanging the request forever.
+import "express-async-errors";
 import express, { Request } from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -6,6 +10,9 @@ import callRoutes from "./routes/callRoutes";
 import leadRoutes from "./routes/leadRoutes";
 import appointmentRoutes from "./routes/appointmentRoutes";
 import calendarRoutes from "./routes/calendarRoutes";
+import campaignRoutes from "./routes/campaignRoutes";
+import followUpRoutes from "./routes/followUpRoutes";
+import dncRoutes from "./routes/dncRoutes";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 
 export function createApp() {
@@ -33,6 +40,9 @@ export function createApp() {
   app.use("/api/leads", leadRoutes);
   app.use("/api/appointments", appointmentRoutes);
   app.use("/api/calendar", calendarRoutes);
+  app.use("/api/campaigns", campaignRoutes);
+  app.use("/api/followups", followUpRoutes);
+  app.use("/api/dnc", dncRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

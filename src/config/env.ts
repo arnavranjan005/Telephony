@@ -8,6 +8,11 @@ const envSchema = z.object({
 
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
 
+  REDIS_URL: z.string().min(1, "REDIS_URL is required (e.g. an Aiven Redis rediss:// connection string)"),
+  REDIS_TLS_REJECT_UNAUTHORIZED: z.coerce.boolean().default(true),
+  DIAL_RATE_LIMIT_MAX: z.coerce.number().default(5),
+  DIAL_RATE_LIMIT_DURATION_MS: z.coerce.number().default(1000),
+
   TELNYX_API_KEY: z.string().min(1, "TELNYX_API_KEY is required"),
   TELNYX_PUBLIC_KEY: z.string().optional(),
   TELNYX_CONNECTION_ID: z.string().min(1, "TELNYX_CONNECTION_ID is required"),

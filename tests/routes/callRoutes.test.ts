@@ -39,6 +39,11 @@ jest.mock("../../src/lib/telnyx/webhookVerifier", () => ({
   verifyTelnyxSignature: (...args: unknown[]) => verifyTelnyxSignature(...args),
 }));
 
+const isNumberOnDnc = jest.fn();
+jest.mock("../../src/lib/compliance/dncService", () => ({
+  isNumberOnDnc: (...args: unknown[]) => isNumberOnDnc(...args),
+}));
+
 jest.mock("../../src/services/callConversationService", () => ({
   handleCallerUtterance: jest.fn(),
 }));
@@ -49,10 +54,15 @@ import { createApp } from "../../src/app";
 const app = createApp();
 
 describe("Call routes", () => {
+  beforeEach(() => {
+    isNumberOnDnc.mockResolvedValue(false);
+  });
+
   it("POST /api/calls/outbound creates a Call record and initiates the Telnyx call", async () => {
     callCreate.mockResolvedValue({ id: "call_1" });
     initiateOutboundCall.mockResolvedValue({ call_control_id: "ctrl_123" });
     callUpdate.mockResolvedValue({ id: "call_1", telnyxCallControlId: "ctrl_123", status: "INITIATED" });
+    callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallControlId: "ctrl_123", status: "INITIATED" });
 
     const res = await request(app).post("/api/calls/outbound").send({ toNumber: "+15551234567" });
 
@@ -68,14 +78,25 @@ describe("Call routes", () => {
     expect(callCreate).not.toHaveBeenCalled();
   });
 
+  it("POST /api/calls/outbound returns 403 and never dials when the number is on the DNC list", async () => {
+    isNumberOnDnc.mockResolvedValue(true);
+
+    const res = await request(app).post("/api/calls/outbound").send({ toNumber: "+15551234567" });
+
+    expect(res.status).toBe(403);
+    expect(callCreate).not.toHaveBeenCalled();
+    expect(initiateOutboundCall).not.toHaveBeenCalled();
+  });
+
   it("POST /api/calls/outbound returns 502 if Telnyx does not return a call_control_id", async () => {
     callCreate.mockResolvedValue({ id: "call_1" });
     initiateOutboundCall.mockResolvedValue({});
+    callUpdate.mockResolvedValue({ id: "call_1", status: "FAILED" });
 
     const res = await request(app).post("/api/calls/outbound").send({ toNumber: "+15551234567" });
 
     expect(res.status).toBe(502);
-    expect(callUpdate).not.toHaveBeenCalled();
+    expect(callUpdate).toHaveBeenCalledWith({ where: { id: "call_1" }, data: { status: "FAILED" } });
   });
 
   it("GET /api/calls/:callId returns 404 when the call does not exist", async () => {

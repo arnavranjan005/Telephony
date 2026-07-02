@@ -4,9 +4,11 @@ import { runConversationTurn } from "../lib/ai/conversationRunner";
 import { AgentMessage, AgentRole } from "../lib/ai/types";
 import { buildCalendarTools } from "../lib/ai/tools/calendarTools";
 import { buildLeadTools } from "../lib/ai/tools/leadTools";
+import { buildComplianceTools } from "../lib/ai/tools/complianceTools";
+import { buildFollowUpTools } from "../lib/ai/tools/followUpTools";
 import { speakText } from "../lib/telnyx/callService";
 import { callEventBus } from "../sse/eventBus";
-import { MessageRole } from "@prisma/client";
+import { CallDirection, MessageRole } from "@prisma/client";
 
 const SYSTEM_PROMPT = `You are a friendly, professional voice sales/support agent speaking on a live phone call.
 Keep responses short and conversational (1-3 sentences), as they will be spoken aloud via text-to-speech.
@@ -70,19 +72,26 @@ export async function handleCallerUtterance(
   callId: string,
   transcript: string
 ): Promise<string> {
-  const call = await prisma.call.findUnique({ where: { id: callId } });
+  const call = await prisma.call.findUnique({ where: { id: callId }, include: { campaignContact: { include: { campaign: true } } } });
   const history = await loadHistory(callId);
   const beforeCount = history.length;
 
   history.push({ role: "user", content: transcript });
 
+  const callerPhoneNumber = call?.direction === CallDirection.INBOUND ? call.fromNumber : call?.toNumber;
+
   const agent = getAIAgent();
   const tools = [
     ...buildCalendarTools({ leadId: call?.leadId ?? undefined, callId }),
     ...buildLeadTools({ leadId: call?.leadId ?? undefined }),
+    ...buildComplianceTools({ phoneNumber: callerPhoneNumber }),
+    ...buildFollowUpTools({ leadId: call?.leadId ?? undefined }),
   ];
 
-  const { history: updatedHistory, finalReply } = await runConversationTurn(agent, history, tools, SYSTEM_PROMPT);
+  const campaignScript = call?.campaignContact?.campaign.script;
+  const systemPrompt = campaignScript ? `${SYSTEM_PROMPT}\n\nCampaign script/guidance:\n${campaignScript}` : SYSTEM_PROMPT;
+
+  const { history: updatedHistory, finalReply } = await runConversationTurn(agent, history, tools, systemPrompt);
 
   await persistNewMessages(callId, beforeCount, updatedHistory);
 

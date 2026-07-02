@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    # Dummy connection strings: prisma generate only reads the schema file
+    # (it doesn't connect), and the Jest suite mocks Prisma/Redis/Telnyx/Google
+    # everywhere, so no real Postgres or Redis service is needed to run CI.
+    env:
+      DATABASE_URL: "postgresql://user:password@localhost:5432/telephony_ci"
+      REDIS_URL: "rediss://default:password@localhost:6379"
+      TELNYX_API_KEY: "ci_telnyx_api_key"
+      TELNYX_CONNECTION_ID: "ci_connection_id"
+      TELNYX_FROM_NUMBER: "+15550000000"
+      GOOGLE_AI_API_KEY: "ci_google_ai_key"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test -- --ci
+
+      - name: Build
+        run: npm run build
