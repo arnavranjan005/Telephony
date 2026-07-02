@@ -174,11 +174,36 @@ multiple writes, or an external call plus a DB write, get explicit handling:
 - **Campaign completion** (`processCampaignContactJob`) and the **PENDING → CALLING claim** on both
   `FollowUp` and `CampaignContact` are both conditional `updateMany` calls, so concurrent callers
   never conflict — see the distributed-dialing section above.
+- **`DELETE /api/leads/:leadId`** uses `deleteMany` (not `delete`), and **`POST /api/appointments/:id/cancel`**
+  short-circuits if the appointment is already `CANCELED` — repeating either call on an
+  already-completed resource returns the same success response instead of a 404/500 on the retry.
 
-**Explicitly out of scope**: REST-level idempotency keys for retried client requests (e.g. a client
-timing out and retrying `POST /api/calls/outbound`) — that's a separate feature (needs an
-idempotency-key table) and isn't implicated by the distributed-worker double-dial risk this work
-targets. Worth a follow-up if duplicate client retries turn out to be a real problem.
+## Idempotency (client-retry safety)
+
+Endpoints that place a real call, book a calendar slot, or create a campaign/follow-up are **not**
+naturally safe to retry — a client that times out and retries would place a second phone call, double
+book a slot, or schedule a duplicate follow-up. These support an opt-in `Idempotency-Key` header
+(Stripe-style), implemented in `src/middleware/idempotency.ts` and applied to:
+
+`POST /api/calls/outbound`, `POST /api/leads`, `POST /api/followups`, `POST /api/campaigns`,
+`POST /api/calendar/appointments`
+
+Send the same `Idempotency-Key: <client-generated-uuid>` header on a retry and you get the *original*
+response replayed instead of the operation running again:
+
+- The key is claimed via an atomic unique-constraint insert (`IdempotencyKey.key`), so two concurrent
+  requests with the same key can't both proceed — the loser gets `409`.
+- A successful (`< 500`) response is cached against the key and replayed verbatim on repeat requests.
+- Reusing a key with a *different* request body returns `422` — otherwise a client bug (reusing a key
+  across unrelated requests) would silently return the wrong cached response.
+- A `>= 500` response releases the key instead of caching it, so a transient failure (e.g. Telnyx
+  briefly down) doesn't permanently lock a client out of ever successfully retrying that key.
+- No header, no behavior change — existing callers are unaffected.
+
+Endpoints that are already naturally idempotent (`GET`s, `PATCH /api/leads/:leadId`, `POST /api/dnc`
+which upserts, `DELETE /api/dnc/:phoneNumber`, campaign `start`/`pause` which just flip a status flag)
+don't need this and don't have it applied. There's no cleanup job for old `IdempotencyKey` rows yet —
+fine at this scale, but worth a TTL sweep if this sees real traffic.
 
 ## Not yet implemented
 

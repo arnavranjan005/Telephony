@@ -26,6 +26,12 @@ export async function cancelAppointment(req: Request, res: Response) {
   const appointment = await prisma.appointment.findUnique({ where: { id: req.params.appointmentId } });
   if (!appointment) return res.status(404).json({ error: "Appointment not found" });
 
+  // Already canceled - return the current state instead of re-calling
+  // Google's cancel API on an event that's already gone (which would error).
+  if (appointment.status === AppointmentStatus.CANCELED) {
+    return res.json({ appointment });
+  }
+
   if (appointment.googleEventId) {
     await cancelGoogleEvent(appointment.googleEventId);
   }

@@ -2,7 +2,7 @@ const leadCreate = jest.fn();
 const leadFindMany = jest.fn();
 const leadFindUnique = jest.fn();
 const leadUpdate = jest.fn();
-const leadDelete = jest.fn();
+const leadDeleteMany = jest.fn();
 
 jest.mock("../../src/config/prisma", () => ({
   prisma: {
@@ -11,7 +11,7 @@ jest.mock("../../src/config/prisma", () => ({
       findMany: (...args: unknown[]) => leadFindMany(...args),
       findUnique: (...args: unknown[]) => leadFindUnique(...args),
       update: (...args: unknown[]) => leadUpdate(...args),
-      delete: (...args: unknown[]) => leadDelete(...args),
+      deleteMany: (...args: unknown[]) => leadDeleteMany(...args),
     },
   },
 }));
@@ -78,11 +78,19 @@ describe("Lead routes", () => {
   });
 
   it("DELETE /api/leads/:leadId deletes the lead and returns 204", async () => {
-    leadDelete.mockResolvedValue({});
+    leadDeleteMany.mockResolvedValue({ count: 1 });
 
     const res = await request(app).delete("/api/leads/lead_1");
 
     expect(res.status).toBe(204);
-    expect(leadDelete).toHaveBeenCalledWith({ where: { id: "lead_1" } });
+    expect(leadDeleteMany).toHaveBeenCalledWith({ where: { id: "lead_1" } });
+  });
+
+  it("DELETE /api/leads/:leadId is idempotent - repeating it on an already-deleted lead still returns 204", async () => {
+    leadDeleteMany.mockResolvedValue({ count: 0 });
+
+    const res = await request(app).delete("/api/leads/lead_1");
+
+    expect(res.status).toBe(204);
   });
 });

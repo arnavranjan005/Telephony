@@ -52,6 +52,9 @@ export async function updateLead(req: Request, res: Response) {
 }
 
 export async function deleteLead(req: Request, res: Response) {
-  await prisma.lead.delete({ where: { id: req.params.leadId } });
+  // deleteMany (not delete) so a repeat call on an already-deleted lead is a
+  // no-op 204 instead of throwing "record not found" - DELETE should be
+  // idempotent.
+  await prisma.lead.deleteMany({ where: { id: req.params.leadId } });
   res.status(204).send();
 }
