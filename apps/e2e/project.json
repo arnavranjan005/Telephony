@@ -11,6 +11,7 @@
     "e2e": {
       "executor": "nx:run-commands",
       "options": { "command": "npm run e2e", "cwd": "apps/e2e" },
+      "dependsOn": ["^build"],
       "cache": false
     }
   }
