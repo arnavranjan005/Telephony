@@ -54,13 +54,20 @@ afterAll(async () => {
 
 beforeEach(async () => {
   telnyxCallCreateCalls = 0;
-  // Clean slate per test - order matters for FK constraints.
+  // Clean slate per test - order matters for FK constraints. This cleans
+  // every table any *.e2e-test.ts file writes to (not just the ones this
+  // file uses), because all e2e files share one database within a single
+  // `--runInBand` run - a row left behind by another file's last test would
+  // otherwise violate a FK constraint here.
+  await prisma.conversationMessage.deleteMany();
+  await prisma.appointment.deleteMany();
   await prisma.followUp.deleteMany();
   await prisma.campaignContact.deleteMany();
   await prisma.campaign.deleteMany();
   await prisma.call.deleteMany();
   await prisma.dncEntry.deleteMany();
   await prisma.lead.deleteMany();
+  await prisma.idempotencyKey.deleteMany();
 });
 
 describe("call lifecycle e2e (real Postgres + Redis)", () => {
