@@ -2,6 +2,7 @@ const callCreate = jest.fn();
 const callFindMany = jest.fn();
 const callFindUnique = jest.fn();
 const callUpdate = jest.fn();
+const leadUpsert = jest.fn();
 
 jest.mock("../../src/config/prisma", () => ({
   prisma: {
@@ -10,6 +11,9 @@ jest.mock("../../src/config/prisma", () => ({
       findMany: (...args: unknown[]) => callFindMany(...args),
       findUnique: (...args: unknown[]) => callFindUnique(...args),
       update: (...args: unknown[]) => callUpdate(...args),
+    },
+    lead: {
+      upsert: (...args: unknown[]) => leadUpsert(...args),
     },
   },
 }));
@@ -118,19 +122,96 @@ describe("Call routes", () => {
     expect(callUpdate).not.toHaveBeenCalled();
   });
 
-  it("POST /api/calls/webhook acknowledges a validly signed call.hangup event and updates the call", async () => {
+  async function sendWebhook(eventType: string, payload: Record<string, unknown>) {
     verifyTelnyxSignature.mockReturnValue(true);
-    callUpdate.mockResolvedValue({ id: "call_1", status: "COMPLETED" });
-
     const res = await request(app)
       .post("/api/calls/webhook")
-      .send({ data: { event_type: "call.hangup", payload: { call_control_id: "ctrl_1" } } });
-
-    expect(res.status).toBe(200);
+      .send({ data: { event_type: eventType, payload } });
     // Webhook processing happens after the immediate 200 ack; flush the microtask queue.
     await new Promise((resolve) => setImmediate(resolve));
+    return res;
+  }
+
+  it("POST /api/calls/webhook acknowledges a validly signed call.hangup event and updates the call", async () => {
+    callFindUnique.mockResolvedValue({ id: "call_1", status: "IN_PROGRESS" });
+    callUpdate.mockResolvedValue({ id: "call_1", status: "COMPLETED" });
+
+    const res = await sendWebhook("call.hangup", { call_control_id: "ctrl_1" });
+
+    expect(res.status).toBe(200);
     expect(callUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ where: { telnyxCallControlId: "ctrl_1" } })
     );
+  });
+
+  describe("call.initiated (inbound)", () => {
+    it("upserts a Lead by caller phone number and links it to the new Call", async () => {
+      callFindUnique.mockResolvedValue(null); // no pre-existing Call -> genuine inbound
+      leadUpsert.mockResolvedValue({ id: "lead_1", phoneNumber: "+15559876543" });
+      callCreate.mockResolvedValue({ id: "call_1" });
+
+      await sendWebhook("call.initiated", { call_control_id: "ctrl_1", from: "+15559876543", to: "+15550000000" });
+
+      expect(leadUpsert).toHaveBeenCalledWith({
+        where: { phoneNumber: "+15559876543" },
+        update: {},
+        create: { phoneNumber: "+15559876543" },
+      });
+      expect(callCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ leadId: "lead_1" }) })
+      );
+      expect(answerCall).toHaveBeenCalledWith("ctrl_1");
+    });
+
+    it("skips lead linking when the caller's number is missing from the payload", async () => {
+      callFindUnique.mockResolvedValue(null);
+      callCreate.mockResolvedValue({ id: "call_1" });
+
+      await sendWebhook("call.initiated", { call_control_id: "ctrl_1" });
+
+      expect(leadUpsert).not.toHaveBeenCalled();
+      expect(callCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ leadId: undefined }) })
+      );
+    });
+
+    it("does not touch leads for the outbound call.initiated echo (Call already exists)", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1" });
+
+      await sendWebhook("call.initiated", { call_control_id: "ctrl_1", from: "+15550000000", to: "+15559876543" });
+
+      expect(leadUpsert).not.toHaveBeenCalled();
+      expect(callCreate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("call.hangup outcome mapping", () => {
+    it("marks the call COMPLETED when it had been answered, regardless of hangup_cause", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", status: "IN_PROGRESS" });
+      callUpdate.mockResolvedValue({ id: "call_1" });
+
+      await sendWebhook("call.hangup", { call_control_id: "ctrl_1", hangup_cause: "normal_clearing" });
+
+      expect(callUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED", outcome: "normal_clearing" }) })
+      );
+    });
+
+    it.each([
+      ["user_busy", "BUSY"],
+      ["no_answer", "NO_ANSWER"],
+      ["timeout", "NO_ANSWER"],
+      ["originator_cancel", "CANCELED"],
+      ["call_rejected", "FAILED"],
+    ])("maps hangup_cause %s to status %s when the call was never answered", async (hangupCause, expectedStatus) => {
+      callFindUnique.mockResolvedValue({ id: "call_1", status: "RINGING" });
+      callUpdate.mockResolvedValue({ id: "call_1" });
+
+      await sendWebhook("call.hangup", { call_control_id: "ctrl_1", hangup_cause: hangupCause });
+
+      expect(callUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: expectedStatus, outcome: hangupCause }) })
+      );
+    });
   });
 });

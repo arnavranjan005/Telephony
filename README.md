@@ -109,12 +109,18 @@ source.addEventListener("conversation.message", (e) => console.log(JSON.parse(e.
 ## How a live call flows
 
 1. Inbound call → `call.initiated` webhook creates a `Call` row and answers it; outbound calls are
-   created via `POST /api/calls/outbound`.
+   created via `POST /api/calls/outbound`. For inbound calls, the caller's phone number is looked up
+   (or a new `Lead` is created) via an upsert on `Lead.phoneNumber` and linked to the `Call` — so a
+   returning caller is recognized as the same lead, and a first-time caller is tracked automatically
+   without anyone having to create a lead for them first.
 2. `call.answered` → starts Telnyx transcription and speaks a greeting.
 3. `call.transcription` (final transcript) → `handleCallerUtterance` persists the utterance, runs
    the AI agent with calendar/lead tools attached, persists the resulting turns, publishes them to
    the SSE bus, and speaks the final reply back on the call.
-4. `call.hangup` → marks the call completed.
+4. `call.hangup` → records the outcome. If the call had reached `call.answered` (a real conversation
+   happened), it's `COMPLETED` regardless of hangup cause. Otherwise Telnyx's `hangup_cause` is mapped
+   to `BUSY` / `NO_ANSWER` / `CANCELED` / `FAILED` and stored on `Call.outcome`, so unanswered dials
+   are distinguishable from completed ones instead of everything being marked `COMPLETED`.
 
 If the call belongs to a campaign contact, the campaign's `script` is appended to the AI agent's
 system prompt for that call. The agent also has `add_to_dnc` (adds the caller to the DNC list the
