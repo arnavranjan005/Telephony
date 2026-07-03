@@ -1,0 +1,34 @@
+{
+  "name": "database",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/database/src",
+  "projectType": "library",
+  "targets": {
+    "prisma-generate": {
+      "executor": "nx:run-commands",
+      "options": { "command": "npm run prisma:generate", "cwd": "packages/database" },
+      "cache": false
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": { "command": "npm run build", "cwd": "packages/database" },
+      "dependsOn": ["prisma-generate"],
+      "outputs": ["{projectRoot}/dist"]
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": { "command": "npm run typecheck", "cwd": "packages/database" },
+      "dependsOn": ["prisma-generate"]
+    },
+    "prisma-migrate": {
+      "executor": "nx:run-commands",
+      "options": { "command": "npm run prisma:migrate", "cwd": "packages/database" },
+      "cache": false
+    },
+    "prisma-studio": {
+      "executor": "nx:run-commands",
+      "options": { "command": "npm run prisma:studio", "cwd": "packages/database" },
+      "cache": false
+    }
+  }
+}
