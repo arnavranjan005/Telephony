@@ -1,0 +1,17 @@
+{
+  "name": "e2e",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/e2e/tests",
+  "projectType": "application",
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": { "command": "npm run typecheck", "cwd": "apps/e2e" }
+    },
+    "e2e": {
+      "executor": "nx:run-commands",
+      "options": { "command": "npm run e2e", "cwd": "apps/e2e" },
+      "cache": false
+    }
+  }
+}
