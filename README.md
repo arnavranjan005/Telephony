@@ -270,13 +270,33 @@ routes/services/tools/pages — and are natural next increments.
 ## End-to-end tests (`apps/e2e`)
 
 Everything above (`npm test`) runs with Prisma, Redis, and Telnyx mocked — it checks each unit/route
-in isolation. `apps/e2e` is different: it boots the real Express app (`createApp()`) and a real
-in-process BullMQ `Worker` (`startWorker()`) against **real** Postgres and Redis running in Docker,
-and drives them with real HTTP requests. Only the `telnyx` package is mocked (it needs a real account
-and costs money to call for real) — Prisma, BullMQ, and every domain service run unmocked. This is the
-only place in the repo that proves the atomic `PENDING -> CALLING` claim logic (used by both
-`followUpService` and `campaignService` to avoid double-dialing when multiple workers race on the same
-row) actually holds under real Postgres row locking, not just against a mocked Prisma client.
+in isolation. `apps/e2e` is different: each spec boots the real Express app (`createApp()`) against
+**real** Postgres and Redis running in Docker, and drives them with real HTTP requests. Only the
+third-party SDK each spec can't safely call for real is mocked, at the narrowest boundary the code's
+architecture allows — everything else (Prisma, Express routing, the domain services, the tool-calling
+loop) runs unmocked:
+
+- `callLifecycle.e2e-test.ts` — mocks `telnyx`; boots a real in-process BullMQ `Worker`
+  (`startWorker()`) alongside the app. The only place proving the atomic `PENDING -> CALLING` claim
+  logic (used by `followUpService` and `campaignService` to avoid double-dialing when multiple workers
+  race on the same row) actually holds under real Postgres row locking, not just a mocked Prisma client.
+- `inboundCall.e2e-test.ts` — mocks `telnyx`; drives `POST /api/calls/webhook` through the
+  `call.initiated -> call.answered -> call.hangup` lifecycle, proving the inbound-caller-to-Lead
+  auto-linking and call-status mapping against real Postgres.
+- `appointmentScheduling.e2e-test.ts` — mocks `googleapis`; drives the real `/api/calendar` and
+  `/api/appointments` routes, proving availability checks, booking, cancellation, and the
+  Idempotency-Key middleware against real Postgres.
+- `aiConversation.e2e-test.ts` — mocks `telnyx` and `googleapis`, plus the `GoogleAgent` provider
+  wrapper in place of `@google/genai` itself. That last substitution isn't a shortcut: `@google/genai`
+  is ESM-only with a broken CJS `require` condition, so `googleAgent.ts` loads it via a
+  Function-constructor dynamic `import()` specifically to dodge ts-jest's `import()` -> `require()`
+  rewrite (see the comment there and in `googleAgent.test.ts`) — which also means Jest's CommonJS module
+  registry can't intercept it with `jest.mock()` short of `--experimental-vm-modules`. Mocking one layer
+  up, at the same provider-agnostic `AIAgent` seam the app already uses to be provider-swappable, is the
+  tightest boundary available. The spec scripts multi-round tool-calling replies to drive a caller
+  utterance through the real `conversationRunner` loop and the real calendar/compliance tool handlers,
+  proving it lands in a real `Appointment` row (booking) or a real `DncEntry` row (opt-out), and that the
+  final reply is actually spoken back over the (mocked) call.
 
 A `docker-compose.yml` at the repo root defines throwaway Postgres (`localhost:55432`) and Redis
 (`localhost:56379`) containers on non-default ports, so they won't collide with anything else you have
