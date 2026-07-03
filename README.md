@@ -170,8 +170,8 @@ during a campaign push), and none of them will double-dial the same row.
 
 - **Producers**: `followUpService.createFollowUp` (in `packages/domain`) enqueues a delayed job
   (`delay = scheduledAt - now`); `campaignService.startCampaign` enqueues one job per `PENDING`
-  contact immediately. Every job uses a **deterministic BullMQ job ID** (`followup:<id>` /
-  `campaign-contact:<id>`), so re-enqueueing the same row (e.g. from the reconciliation sweep below)
+  contact immediately. Every job uses a **deterministic BullMQ job ID** (`followup-<id>` /
+  `campaign-contact-<id>`), so re-enqueueing the same row (e.g. from the reconciliation sweep below)
   is a no-op instead of a duplicate job.
 - **Consumer**: `apps/worker/src/worker.ts` runs a BullMQ `Worker` with a rate limiter
   (`DIAL_RATE_LIMIT_MAX` jobs per `DIAL_RATE_LIMIT_DURATION_MS`, default 5/sec) so Telnyx never gets
@@ -266,3 +266,29 @@ routes/services/tools/pages — and are natural next increments.
 - `npm test` — run every project's test suite
 - `npx nx run database:prisma-studio` — browse the database
 - `npx nx graph` — visualize the project dependency graph
+
+## End-to-end tests (`apps/e2e`)
+
+Everything above (`npm test`) runs with Prisma, Redis, and Telnyx mocked — it checks each unit/route
+in isolation. `apps/e2e` is different: it boots the real Express app (`createApp()`) and a real
+in-process BullMQ `Worker` (`startWorker()`) against **real** Postgres and Redis running in Docker,
+and drives them with real HTTP requests. Only the `telnyx` package is mocked (it needs a real account
+and costs money to call for real) — Prisma, BullMQ, and every domain service run unmocked. This is the
+only place in the repo that proves the atomic `PENDING -> CALLING` claim logic (used by both
+`followUpService` and `campaignService` to avoid double-dialing when multiple workers race on the same
+row) actually holds under real Postgres row locking, not just against a mocked Prisma client.
+
+A `docker-compose.yml` at the repo root defines throwaway Postgres (`localhost:55432`) and Redis
+(`localhost:56379`) containers on non-default ports, so they won't collide with anything else you have
+running locally.
+
+```bash
+npm run e2e:up       # start dockerized Postgres + Redis (docker compose up -d --wait)
+npm run e2e:migrate  # push the Prisma schema to the e2e database (prisma db push — no migrations/ dir yet)
+npx nx run e2e:e2e   # run the e2e suite (or just: npm run e2e, which chains all three)
+npm run e2e:down     # tear the containers down
+```
+
+Requires Docker (with the `docker compose` plugin) installed locally. CI runs this same suite as a
+separate `e2e` job using GitHub Actions service containers instead of `docker compose` — see
+`.github/workflows/ci.yml`.

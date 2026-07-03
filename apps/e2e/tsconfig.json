@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "../.."
+  },
+  "include": ["tests/**/*.ts", "../api/src/**/*.ts", "../worker/src/**/*.ts"],
+  "exclude": ["node_modules", "../api/src/**/*.test.ts"]
+}

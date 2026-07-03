@@ -9,13 +9,19 @@ export type DialJobData =
 
 export const dialQueue = new Queue<DialJobData, void, string>(DIAL_QUEUE_NAME, { connection: redisConnection });
 
-/** Deterministic BullMQ job IDs so re-enqueueing the same row is a no-op. */
+/**
+ * Deterministic BullMQ job IDs so re-enqueueing the same row is a no-op.
+ * BullMQ reserves `:` in custom job IDs for its own repeatable-job encoding
+ * (a bare `foo:bar` custom ID throws "Custom Id cannot contain :" - it only
+ * accepts colons in groups of exactly 3 segments), so a plain "-" separator
+ * is used instead.
+ */
 export function followUpJobId(followUpId: string): string {
-  return `followup:${followUpId}`;
+  return `followup-${followUpId}`;
 }
 
 export function campaignContactJobId(campaignContactId: string): string {
-  return `campaign-contact:${campaignContactId}`;
+  return `campaign-contact-${campaignContactId}`;
 }
 
 export async function enqueueFollowUpDial(followUpId: string, scheduledAt: Date): Promise<void> {
