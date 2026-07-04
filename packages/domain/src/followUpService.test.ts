@@ -109,11 +109,14 @@ describe("followUpService", () => {
         leadId: "lead_1",
         lead: { phoneNumber: "+15551234567" },
       });
-      placeOutboundCall.mockResolvedValue({ outcome: "failed", error: "boom" });
+      placeOutboundCall.mockResolvedValue({ outcome: "failed", error: "boom", callId: "call_1" });
 
       await processFollowUpJob("fu_1");
 
-      expect(followUpUpdate).toHaveBeenCalledWith({ where: { id: "fu_1" }, data: { status: "FAILED" } });
+      expect(followUpUpdate).toHaveBeenCalledWith({
+        where: { id: "fu_1" },
+        data: { status: "FAILED", callId: "call_1" },
+      });
     });
   });
 });

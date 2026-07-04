@@ -126,7 +126,7 @@ export async function processCampaignContactJob(campaignContactId: string): Prom
   } else if (result.outcome === "failed") {
     await prisma.campaignContact.update({
       where: { id: campaignContactId },
-      data: { status: CampaignContactStatus.FAILED },
+      data: { status: CampaignContactStatus.FAILED, callId: result.callId },
     });
   } else {
     await prisma.campaignContact.update({
