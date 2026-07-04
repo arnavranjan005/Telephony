@@ -84,7 +84,7 @@ export async function handleCallerUtterance(
     ...buildCalendarTools({ leadId: call?.leadId ?? undefined, callId }),
     ...buildLeadTools({ leadId: call?.leadId ?? undefined }),
     ...buildComplianceTools({ phoneNumber: callerPhoneNumber }),
-    ...buildFollowUpTools({ leadId: call?.leadId ?? undefined }),
+    ...buildFollowUpTools({ leadId: call?.leadId ?? undefined, phoneNumber: callerPhoneNumber }),
   ];
 
   const campaignScript = call?.campaignContact?.campaign.script;

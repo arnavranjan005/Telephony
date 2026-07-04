@@ -162,6 +162,13 @@ system prompt for that call. The agent also has `add_to_dnc` (adds the caller to
 moment they ask to stop being contacted) and `schedule_followup` (books an automatic callback)
 tools available on every call, alongside the calendar and lead tools.
 
+`schedule_followup` validates the caller's requested time against the calling-hours window (see
+below) *before* writing anything: a request outside 8am-9pm local to the caller's number schedules
+nothing and returns a suggested in-window time instead, so the agent can negotiate a real time with
+the caller in conversation ("I can only call between 8am and 9pm - does 8:30am tomorrow work?")
+rather than silently booking a promise that the dial-time calling-hours gate would later break
+without telling anyone.
+
 ## Automated dialing (campaigns & follow-ups) — distributed via BullMQ
 
 Dialing is driven by a BullMQ queue (`packages/queue/src/dialQueue.ts`, one queue named `dial`)
