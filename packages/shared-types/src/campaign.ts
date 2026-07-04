@@ -1,5 +1,5 @@
 export type CampaignStatus = "DRAFT" | "RUNNING" | "PAUSED" | "COMPLETED";
-export type CampaignContactStatus = "PENDING" | "CALLING" | "CALLED" | "FAILED" | "SKIPPED_DNC";
+export type CampaignContactStatus = "PENDING" | "CALLING" | "CALLED" | "FAILED" | "SKIPPED_DNC" | "SKIPPED_NO_CONSENT";
 
 export interface Campaign {
   id: string;

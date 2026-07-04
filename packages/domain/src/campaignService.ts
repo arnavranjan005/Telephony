@@ -1,6 +1,7 @@
 import { CampaignContactStatus, CampaignStatus, prisma } from "@telephony/database";
-import { enqueueCampaignContactDial } from "@telephony/queue";
+import { enqueueCampaignContactDial, enqueueCampaignContactDialAt } from "@telephony/queue";
 import { placeOutboundCall } from "./outboundDialService";
+import { isWithinCallingHours, nextCallingWindowStart } from "./compliance/callingHours";
 
 export interface CampaignContactInput {
   leadId?: string;
@@ -116,12 +117,30 @@ export async function processCampaignContactJob(campaignContactId: string): Prom
     include: { lead: true },
   });
 
-  const result = await placeOutboundCall(contact.lead.phoneNumber, contact.leadId);
+  // TCPA calling-hours (8am-9pm local to the number) is a *when*, not a
+  // *whether* - give the claim back instead of finalizing a terminal status,
+  // and reschedule for the next legal window rather than dropping the
+  // contact.
+  if (!isWithinCallingHours(contact.lead.phoneNumber)) {
+    await prisma.campaignContact.update({
+      where: { id: campaignContactId },
+      data: { status: CampaignContactStatus.PENDING },
+    });
+    await enqueueCampaignContactDialAt(campaignContactId, nextCallingWindowStart(contact.lead.phoneNumber));
+    return;
+  }
+
+  const result = await placeOutboundCall(contact.lead.phoneNumber, contact.leadId, { requireConsent: true });
 
   if (result.outcome === "skipped_dnc") {
     await prisma.campaignContact.update({
       where: { id: campaignContactId },
       data: { status: CampaignContactStatus.SKIPPED_DNC },
+    });
+  } else if (result.outcome === "skipped_no_consent") {
+    await prisma.campaignContact.update({
+      where: { id: campaignContactId },
+      data: { status: CampaignContactStatus.SKIPPED_NO_CONSENT },
     });
   } else if (result.outcome === "failed") {
     await prisma.campaignContact.update({

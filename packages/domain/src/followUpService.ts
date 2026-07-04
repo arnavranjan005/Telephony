@@ -1,6 +1,7 @@
 import { FollowUpStatus, prisma } from "@telephony/database";
-import { enqueueFollowUpDial } from "@telephony/queue";
+import { enqueueFollowUpDial, enqueueFollowUpDialAt } from "@telephony/queue";
 import { placeOutboundCall } from "./outboundDialService";
+import { isWithinCallingHours, nextCallingWindowStart } from "./compliance/callingHours";
 
 export interface CreateFollowUpInput {
   leadId: string;
@@ -42,10 +43,24 @@ export async function processFollowUpJob(followUpId: string): Promise<void> {
   if (claimed.count === 0) return; // already claimed, canceled, or completed elsewhere
 
   const followUp = await prisma.followUp.findUniqueOrThrow({ where: { id: followUpId }, include: { lead: true } });
-  const result = await placeOutboundCall(followUp.lead.phoneNumber, followUp.leadId);
+
+  // TCPA calling-hours (8am-9pm local to the number) is a *when*, not a
+  // *whether* - give the claim back instead of finalizing a terminal status,
+  // and reschedule for the next legal window rather than dropping the row.
+  if (!isWithinCallingHours(followUp.lead.phoneNumber)) {
+    await prisma.followUp.update({ where: { id: followUpId }, data: { status: FollowUpStatus.PENDING } });
+    await enqueueFollowUpDialAt(followUpId, nextCallingWindowStart(followUp.lead.phoneNumber));
+    return;
+  }
+
+  const result = await placeOutboundCall(followUp.lead.phoneNumber, followUp.leadId, { requireConsent: true });
 
   if (result.outcome === "skipped_dnc") {
     await prisma.followUp.update({ where: { id: followUpId }, data: { status: FollowUpStatus.SKIPPED_DNC } });
+    return;
+  }
+  if (result.outcome === "skipped_no_consent") {
+    await prisma.followUp.update({ where: { id: followUpId }, data: { status: FollowUpStatus.SKIPPED_NO_CONSENT } });
     return;
   }
   if (result.outcome === "failed") {

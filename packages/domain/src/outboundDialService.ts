@@ -1,21 +1,42 @@
 import { CallDirection, CallStatus, CampaignContactStatus, FollowUpStatus, prisma } from "@telephony/database";
 import { initiateOutboundCall } from "./telnyx/callService";
 import { isNumberOnDnc } from "./dncService";
+import { hasConsent } from "./consentService";
 
 export type DialResult =
   | { outcome: "dialed"; callId: string }
   | { outcome: "skipped_dnc" }
+  | { outcome: "skipped_no_consent" }
   | { outcome: "failed"; error: string; callId: string };
+
+export interface PlaceOutboundCallOptions {
+  /**
+   * Require the lead to have on-file TCPA consent (Lead.consentStatus ===
+   * GRANTED) before dialing. Set by automated campaign/follow-up dispatch,
+   * where a human isn't reviewing each call before it's placed; left off for
+   * the manual single-call endpoint, which a human explicitly triggers.
+   */
+  requireConsent?: boolean;
+}
 
 /**
  * Single dialing path shared by the manual outbound-call endpoint, campaign
- * dispatch, and follow-up dispatch: checks the DNC list, creates the Call
- * record, and places the Telnyx call. Keeping this in one place means the
- * DNC check can't be skipped by a future call site that forgets it.
+ * dispatch, and follow-up dispatch: checks the DNC list (and, for automated
+ * dispatch, consent), creates the Call record, and places the Telnyx call.
+ * Keeping this in one place means those checks can't be skipped by a future
+ * call site that forgets them.
  */
-export async function placeOutboundCall(toNumber: string, leadId?: string): Promise<DialResult> {
+export async function placeOutboundCall(
+  toNumber: string,
+  leadId?: string,
+  options?: PlaceOutboundCallOptions
+): Promise<DialResult> {
   if (await isNumberOnDnc(toNumber)) {
     return { outcome: "skipped_dnc" };
+  }
+
+  if (options?.requireConsent && !(leadId && (await hasConsent(leadId)))) {
+    return { outcome: "skipped_no_consent" };
   }
 
   const call = await prisma.call.create({

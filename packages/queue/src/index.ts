@@ -3,7 +3,9 @@ export {
   dialQueue,
   DIAL_QUEUE_NAME,
   enqueueCampaignContactDial,
+  enqueueCampaignContactDialAt,
   enqueueFollowUpDial,
+  enqueueFollowUpDialAt,
   followUpJobId,
   campaignContactJobId,
 } from "./dialQueue";

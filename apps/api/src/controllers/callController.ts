@@ -31,6 +31,9 @@ export async function createOutboundCall(req: Request, res: Response) {
   if (result.outcome === "skipped_dnc") {
     return res.status(403).json({ error: "This number is on the Do-Not-Call list" });
   }
+  if (result.outcome === "skipped_no_consent") {
+    return res.status(403).json({ error: "This lead has not granted consent to be contacted" });
+  }
   if (result.outcome === "failed") {
     return res.status(502).json({ error: result.error });
   }

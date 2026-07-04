@@ -26,7 +26,7 @@ import request from "supertest";
 import { Worker } from "bullmq";
 import { createApp } from "../../api/src/app";
 import { startWorker } from "../../worker/src/worker";
-import { prisma, CampaignContactStatus, CampaignStatus, FollowUpStatus } from "@telephony/database";
+import { prisma, CampaignContactStatus, CampaignStatus, ConsentStatus, FollowUpStatus } from "@telephony/database";
 import { dialQueue } from "@telephony/queue";
 
 const app = createApp();
@@ -105,6 +105,8 @@ describe("campaign/follow-up controls e2e (real Postgres + Redis + worker, mocke
       const contacts = Array.from({ length: 8 }, (_, i) => ({ phoneNumber: `+1555777${String(i).padStart(4, "0")}` }));
       const createRes = await request(app).post("/api/campaigns").send({ name: "rate-limit e2e campaign", contacts });
       const campaignId = createRes.body.campaign.id;
+      const leadIds = createRes.body.campaign.contacts.map((c: { leadId: string }) => c.leadId);
+      await prisma.lead.updateMany({ where: { id: { in: leadIds } }, data: { consentStatus: ConsentStatus.GRANTED } });
 
       const startedAt = Date.now();
       await request(app).post(`/api/campaigns/${campaignId}/start`);
@@ -151,6 +153,8 @@ describe("campaign/follow-up controls e2e (real Postgres + Redis + worker, mocke
       const contacts = Array.from({ length: 8 }, (_, i) => ({ phoneNumber: `+1555888${String(i).padStart(4, "0")}` }));
       const createRes = await request(app).post("/api/campaigns").send({ name: "pause e2e campaign", contacts });
       const campaignId = createRes.body.campaign.id;
+      const leadIds = createRes.body.campaign.contacts.map((c: { leadId: string }) => c.leadId);
+      await prisma.lead.updateMany({ where: { id: { in: leadIds } }, data: { consentStatus: ConsentStatus.GRANTED } });
 
       await request(app).post(`/api/campaigns/${campaignId}/start`);
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -208,6 +212,8 @@ describe("campaign/follow-up controls e2e (real Postgres + Redis + worker, mocke
     const createRes = await request(app).post("/api/campaigns").send({ name: "resume e2e campaign", contacts });
     const campaignId = createRes.body.campaign.id;
     const contactIds: string[] = createRes.body.campaign.contacts.map((c: { id: string }) => c.id);
+    const leadIds = createRes.body.campaign.contacts.map((c: { leadId: string }) => c.leadId);
+    await prisma.lead.updateMany({ where: { id: { in: leadIds } }, data: { consentStatus: ConsentStatus.GRANTED } });
 
     await request(app).post(`/api/campaigns/${campaignId}/pause`);
     // Paused before ever starting: contacts are still PENDING and were never enqueued.

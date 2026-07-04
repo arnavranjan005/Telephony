@@ -21,6 +21,15 @@ export type { CampaignContactInput, CreateCampaignInput } from "./campaignServic
 
 export { isNumberOnDnc, addToDnc, removeFromDnc, listDnc } from "./dncService";
 
+export { recordConsent, revokeConsent, hasConsent } from "./consentService";
+
+export {
+  getAreaCode,
+  getTimezoneForPhoneNumber,
+  isWithinCallingHours,
+  nextCallingWindowStart,
+} from "./compliance/callingHours";
+
 export { telnyxClient } from "./telnyx/telnyxClient";
 export {
   initiateOutboundCall,

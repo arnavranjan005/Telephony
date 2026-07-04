@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma, LeadStatus } from "@telephony/database";
+import { recordConsent, revokeConsent } from "@telephony/domain";
 
 const createLeadSchema = z.object({
   firstName: z.string().optional(),
@@ -47,6 +48,29 @@ export async function updateLead(req: Request, res: Response) {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const lead = await prisma.lead.update({ where: { id: req.params.leadId }, data: parsed.data });
+  res.json({ lead });
+}
+
+const setConsentSchema = z.object({
+  granted: z.boolean(),
+  source: z.string().optional(),
+});
+
+/**
+ * Records (or revokes) TCPA consent for a lead - the gate automated
+ * campaign/follow-up dialing checks before placing a call. Kept as its own
+ * endpoint (rather than a plain PATCH field) so consentedAt is always set
+ * server-side from the moment consent actually changes, not whatever value a
+ * client happens to send.
+ */
+export async function setLeadConsent(req: Request, res: Response) {
+  const parsed = setConsentSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const lead = parsed.data.granted
+    ? await recordConsent(req.params.leadId, parsed.data.source)
+    : await revokeConsent(req.params.leadId);
+
   res.json({ lead });
 }
 

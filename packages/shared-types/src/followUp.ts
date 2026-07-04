@@ -1,4 +1,11 @@
-export type FollowUpStatus = "PENDING" | "CALLING" | "COMPLETED" | "FAILED" | "CANCELED" | "SKIPPED_DNC";
+export type FollowUpStatus =
+  | "PENDING"
+  | "CALLING"
+  | "COMPLETED"
+  | "FAILED"
+  | "CANCELED"
+  | "SKIPPED_DNC"
+  | "SKIPPED_NO_CONSENT";
 
 export interface FollowUp {
   id: string;

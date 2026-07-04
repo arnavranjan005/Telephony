@@ -42,6 +42,11 @@ jest.mock("./dncService", () => ({
   isNumberOnDnc: (...args: unknown[]) => isNumberOnDnc(...args),
 }));
 
+const hasConsent = jest.fn();
+jest.mock("./consentService", () => ({
+  hasConsent: (...args: unknown[]) => hasConsent(...args),
+}));
+
 import { finalizeDialOutcome, placeOutboundCall } from "./outboundDialService";
 
 describe("placeOutboundCall", () => {
@@ -68,6 +73,41 @@ describe("placeOutboundCall", () => {
       where: { id: "call_1" },
       data: { telnyxCallControlId: "ctrl_1", status: "INITIATED" },
     });
+    expect(hasConsent).not.toHaveBeenCalled(); // requireConsent wasn't requested
+  });
+
+  it("skips dialing (no Call row) when consent is required but not on file", async () => {
+    isNumberOnDnc.mockResolvedValue(false);
+    hasConsent.mockResolvedValue(false);
+
+    const result = await placeOutboundCall("+15551234567", "lead_1", { requireConsent: true });
+
+    expect(result).toEqual({ outcome: "skipped_no_consent" });
+    expect(hasConsent).toHaveBeenCalledWith("lead_1");
+    expect(callCreate).not.toHaveBeenCalled();
+    expect(initiateOutboundCall).not.toHaveBeenCalled();
+  });
+
+  it("skips dialing when consent is required but there's no lead to check consent against", async () => {
+    isNumberOnDnc.mockResolvedValue(false);
+
+    const result = await placeOutboundCall("+15551234567", undefined, { requireConsent: true });
+
+    expect(result).toEqual({ outcome: "skipped_no_consent" });
+    expect(hasConsent).not.toHaveBeenCalled();
+    expect(callCreate).not.toHaveBeenCalled();
+  });
+
+  it("dials when consent is required and on file", async () => {
+    isNumberOnDnc.mockResolvedValue(false);
+    hasConsent.mockResolvedValue(true);
+    callCreate.mockResolvedValue({ id: "call_1" });
+    initiateOutboundCall.mockResolvedValue({ call_control_id: "ctrl_1" });
+    callUpdate.mockResolvedValue({ id: "call_1" });
+
+    const result = await placeOutboundCall("+15551234567", "lead_1", { requireConsent: true });
+
+    expect(result).toEqual({ outcome: "dialed", callId: "call_1" });
   });
 
   it("marks the call FAILED and returns a failed outcome when Telnyx errors", async () => {
