@@ -78,8 +78,11 @@ describe("placeOutboundCall", () => {
 
     const result = await placeOutboundCall("+15551234567", "lead_1");
 
-    expect(result).toEqual({ outcome: "failed", error: "Telnyx unavailable" });
-    expect(callUpdate).toHaveBeenCalledWith({ where: { id: "call_2" }, data: { status: "FAILED" } });
+    expect(result).toEqual({ outcome: "failed", error: "Telnyx unavailable", callId: "call_2" });
+    expect(callUpdate).toHaveBeenCalledWith({
+      where: { id: "call_2" },
+      data: { status: "FAILED", outcome: "Telnyx unavailable" },
+    });
   });
 
   it("marks the call FAILED when Telnyx returns no call_control_id", async () => {
@@ -91,7 +94,10 @@ describe("placeOutboundCall", () => {
     const result = await placeOutboundCall("+15551234567", "lead_1");
 
     expect(result.outcome).toBe("failed");
-    expect(callUpdate).toHaveBeenCalledWith({ where: { id: "call_3" }, data: { status: "FAILED" } });
+    expect(callUpdate).toHaveBeenCalledWith({
+      where: { id: "call_3" },
+      data: { status: "FAILED", outcome: "Telnyx did not return a call_control_id" },
+    });
   });
 });
 

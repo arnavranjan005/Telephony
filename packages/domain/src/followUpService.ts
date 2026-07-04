@@ -49,7 +49,10 @@ export async function processFollowUpJob(followUpId: string): Promise<void> {
     return;
   }
   if (result.outcome === "failed") {
-    await prisma.followUp.update({ where: { id: followUpId }, data: { status: FollowUpStatus.FAILED } });
+    await prisma.followUp.update({
+      where: { id: followUpId },
+      data: { status: FollowUpStatus.FAILED, callId: result.callId },
+    });
     return;
   }
 

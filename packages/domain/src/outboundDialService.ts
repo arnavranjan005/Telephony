@@ -5,7 +5,7 @@ import { isNumberOnDnc } from "./dncService";
 export type DialResult =
   | { outcome: "dialed"; callId: string }
   | { outcome: "skipped_dnc" }
-  | { outcome: "failed"; error: string };
+  | { outcome: "failed"; error: string; callId: string };
 
 /**
  * Single dialing path shared by the manual outbound-call endpoint, campaign
@@ -41,8 +41,9 @@ export async function placeOutboundCall(toNumber: string, leadId?: string): Prom
 
     return { outcome: "dialed", callId: call.id };
   } catch (error) {
-    await prisma.call.update({ where: { id: call.id }, data: { status: CallStatus.FAILED } });
-    return { outcome: "failed", error: error instanceof Error ? error.message : String(error) };
+    const message = error instanceof Error ? error.message : String(error);
+    await prisma.call.update({ where: { id: call.id }, data: { status: CallStatus.FAILED, outcome: message } });
+    return { outcome: "failed", error: message, callId: call.id };
   }
 }
 

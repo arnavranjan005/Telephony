@@ -195,6 +195,25 @@ describe("campaignService", () => {
       expect(placeOutboundCall).toHaveBeenCalledTimes(1);
     });
 
+    it("marks a failed dial FAILED and links the call for the failure reason", async () => {
+      campaignContactUpdateMany.mockResolvedValue({ count: 1 });
+      campaignContactFindUniqueOrThrow.mockResolvedValue({
+        id: "cc_1",
+        leadId: "lead_1",
+        campaignId: "camp_1",
+        lead: { phoneNumber: "+15551234567" },
+      });
+      placeOutboundCall.mockResolvedValue({ outcome: "failed", error: "boom", callId: "call_1" });
+      campaignContactCount.mockResolvedValue(0);
+
+      await processCampaignContactJob("cc_1");
+
+      expect(campaignContactUpdate).toHaveBeenCalledWith({
+        where: { id: "cc_1" },
+        data: { status: "FAILED", callId: "call_1" },
+      });
+    });
+
     it("marks a DNC-listed contact SKIPPED_DNC", async () => {
       campaignContactUpdateMany.mockResolvedValue({ count: 1 });
       campaignContactFindUniqueOrThrow.mockResolvedValue({
