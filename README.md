@@ -107,6 +107,7 @@ and set that URL in the Telnyx portal.
 - `GET /api/calls/:callId/events` — SSE stream of call status + AI conversation turns
 - `POST /api/calls/webhook` — Telnyx webhook receiver (call.initiated/answered/transcription/hangup)
 - `POST /api/leads`, `GET /api/leads`, `GET /api/leads/:leadId`, `PATCH /api/leads/:leadId`, `DELETE /api/leads/:leadId`
+- `POST /api/leads/:leadId/consent` `{ granted, source? }` — record or revoke TCPA consent for a lead; `consentedAt` is always set server-side
 - `GET /api/calendar/busy?timeMin=&timeMax=` — free/busy lookup
 - `POST /api/calendar/appointments` `{ title, startTime, endTime, leadId?, callId?, attendeeEmail? }` — book directly via REST
 - `GET /api/appointments`, `GET /api/appointments/:id`, `POST /api/appointments/:id/cancel`
@@ -190,11 +191,38 @@ during a campaign push), and none of them will double-dial the same row.
   is the source of truth, the queue is derived from it.
 - Both job types dial through `packages/domain/src/outboundDialService.ts`, the same path used by
   the manual `POST /api/calls/outbound` endpoint — every outbound call, however it originates, checks
-  the DNC list first and is skipped (marked `SKIPPED_DNC`) if the number is listed.
+  the DNC list first and is skipped (marked `SKIPPED_DNC`) if the number is listed. Campaign and
+  follow-up dispatch additionally require lead consent and a legal calling-hours window - see below.
 
 `apps/api` and `apps/worker` are independently deployable and scalable — run `npm run dev:api` and
 `npm run dev:worker` as separate processes (locally, that's two terminals; in production, two
 separate deployments pointed at the same Postgres and Redis).
+
+## TCPA compliance: consent and calling hours
+
+Beyond the DNC list (opt-out, number-scoped), two more TCPA-relevant checks gate every **automated**
+outbound dial (campaign dispatch and follow-up dispatch — not the manual `POST /api/calls/outbound`
+endpoint, which a human explicitly triggers per call):
+
+- **Consent** (`packages/domain/src/consentService.ts`) — opt-in, lead-scoped. Every `Lead` has a
+  `consentStatus` (`UNKNOWN` by default, `GRANTED`, or `REVOKED`), a `consentSource`, and a
+  `consentedAt` timestamp. `POST /api/leads/:leadId/consent` `{ granted, source? }` records or revokes
+  it — `consentedAt` is always set server-side at the moment it changes, not from client input, so it's
+  a reliable audit trail. `outboundDialService.placeOutboundCall` takes a `requireConsent` option;
+  `campaignService`/`followUpService` pass it, so a lead without `GRANTED` consent is skipped
+  (`SKIPPED_NO_CONSENT`) instead of dialed.
+- **Calling hours** (`packages/domain/src/compliance/callingHours.ts`) — 47 CFR 64.1200(a)(3): no
+  calls before 8am or after 9pm in the *called number's* local time. The called number's area code is
+  mapped to an IANA time zone via a built-in NANP table (`compliance/areaCodeTimezones.ts`); numbers
+  with an unrecognized area code (including non-NANP/international numbers) have no determinable local
+  time and are treated as unrestricted rather than blocked. Unlike DNC/consent, this is a *when* rather
+  than a *whether*: `processCampaignContactJob`/`processFollowUpJob` check it before dialing, and if
+  it's currently outside the window, give the row's claim back to `PENDING` and reschedule the dial for
+  the next legal window (`nextCallingWindowStart`) instead of finalizing any terminal status.
+
+Both checks are heuristics, not full compliance coverage — see "Not yet implemented" below for what's
+still missing (National DNC Registry scrubbing, litigator-list scrubbing, per-number call-frequency
+caps, state-specific rules).
 
 ### Redis setup (Aiven free tier)
 
@@ -257,6 +285,13 @@ live bidirectional audio streaming (current inbound/outbound conversation flow u
 transcription + TTS webhooks rather than raw media streaming, and voice is whatever Telnyx's TTS
 provides — no custom paralinguistic fillers/pacing). These fit into the same architecture — new
 routes/services/tools/pages — and are natural next increments.
+
+TCPA compliance is partial (see the section above for what's covered - consent tracking and calling
+hours). Still missing: National DNC Registry scrubbing (the FCC's registry, distinct from this app's
+internal opt-out list, requires a paid SAN/API subscription), litigator-list scrubbing, per-number
+call-frequency caps, an automatic retry/re-contact policy for busy/no-answer outcomes (today those are
+just recorded, not re-queued), and state-specific "mini-TCPA" rules layered on top of the federal
+baseline.
 
 ## Scripts (run from the repo root)
 

@@ -14,7 +14,15 @@ jest.mock("@telephony/database", () => ({
       create: (...args: unknown[]) => followUpCreate(...args),
     },
   },
-  FollowUpStatus: { PENDING: "PENDING", CALLING: "CALLING", SKIPPED_DNC: "SKIPPED_DNC", FAILED: "FAILED", CANCELED: "CANCELED", COMPLETED: "COMPLETED" },
+  FollowUpStatus: {
+    PENDING: "PENDING",
+    CALLING: "CALLING",
+    SKIPPED_DNC: "SKIPPED_DNC",
+    SKIPPED_NO_CONSENT: "SKIPPED_NO_CONSENT",
+    FAILED: "FAILED",
+    CANCELED: "CANCELED",
+    COMPLETED: "COMPLETED",
+  },
 }));
 
 const placeOutboundCall = jest.fn();
@@ -23,11 +31,24 @@ jest.mock("./outboundDialService", () => ({
 }));
 
 const enqueueFollowUpDial = jest.fn();
+const enqueueFollowUpDialAt = jest.fn();
 jest.mock("@telephony/queue", () => ({
   enqueueFollowUpDial: (...args: unknown[]) => enqueueFollowUpDial(...args),
+  enqueueFollowUpDialAt: (...args: unknown[]) => enqueueFollowUpDialAt(...args),
+}));
+
+const isWithinCallingHours = jest.fn();
+const nextCallingWindowStart = jest.fn();
+jest.mock("./compliance/callingHours", () => ({
+  isWithinCallingHours: (...args: unknown[]) => isWithinCallingHours(...args),
+  nextCallingWindowStart: (...args: unknown[]) => nextCallingWindowStart(...args),
 }));
 
 import { createFollowUp, processFollowUpJob } from "./followUpService";
+
+beforeEach(() => {
+  isWithinCallingHours.mockReturnValue(true); // default: every existing test dials as if within the legal window
+});
 
 describe("followUpService", () => {
   describe("createFollowUp", () => {
@@ -60,7 +81,7 @@ describe("followUpService", () => {
         where: { id: "fu_1", status: "PENDING" },
         data: { status: "CALLING" },
       });
-      expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", "lead_1");
+      expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", "lead_1", { requireConsent: true });
       expect(followUpUpdate).toHaveBeenCalledWith({ where: { id: "fu_1" }, data: { callId: "call_1" } });
     });
 
@@ -117,6 +138,38 @@ describe("followUpService", () => {
         where: { id: "fu_1" },
         data: { status: "FAILED", callId: "call_1" },
       });
+    });
+
+    it("marks a follow-up without on-file consent SKIPPED_NO_CONSENT", async () => {
+      followUpUpdateMany.mockResolvedValue({ count: 1 });
+      followUpFindUniqueOrThrow.mockResolvedValue({
+        id: "fu_1",
+        leadId: "lead_1",
+        lead: { phoneNumber: "+15551234567" },
+      });
+      placeOutboundCall.mockResolvedValue({ outcome: "skipped_no_consent" });
+
+      await processFollowUpJob("fu_1");
+
+      expect(followUpUpdate).toHaveBeenCalledWith({ where: { id: "fu_1" }, data: { status: "SKIPPED_NO_CONSENT" } });
+    });
+
+    it("outside the legal calling window: gives the claim back to PENDING and reschedules for the next window instead of dialing", async () => {
+      followUpUpdateMany.mockResolvedValue({ count: 1 });
+      followUpFindUniqueOrThrow.mockResolvedValue({
+        id: "fu_1",
+        leadId: "lead_1",
+        lead: { phoneNumber: "+12125551234" },
+      });
+      isWithinCallingHours.mockReturnValue(false);
+      const nextWindow = new Date("2026-01-16T13:00:00Z");
+      nextCallingWindowStart.mockReturnValue(nextWindow);
+
+      await processFollowUpJob("fu_1");
+
+      expect(placeOutboundCall).not.toHaveBeenCalled();
+      expect(followUpUpdate).toHaveBeenCalledWith({ where: { id: "fu_1" }, data: { status: "PENDING" } });
+      expect(enqueueFollowUpDialAt).toHaveBeenCalledWith("fu_1", nextWindow);
     });
   });
 });

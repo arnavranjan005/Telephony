@@ -48,6 +48,7 @@ jest.mock("@telephony/database", () => ({
     CALLED: "CALLED",
     FAILED: "FAILED",
     SKIPPED_DNC: "SKIPPED_DNC",
+    SKIPPED_NO_CONSENT: "SKIPPED_NO_CONSENT",
   },
 }));
 
@@ -57,11 +58,24 @@ jest.mock("./outboundDialService", () => ({
 }));
 
 const enqueueCampaignContactDial = jest.fn();
+const enqueueCampaignContactDialAt = jest.fn();
 jest.mock("@telephony/queue", () => ({
   enqueueCampaignContactDial: (...args: unknown[]) => enqueueCampaignContactDial(...args),
+  enqueueCampaignContactDialAt: (...args: unknown[]) => enqueueCampaignContactDialAt(...args),
+}));
+
+const isWithinCallingHours = jest.fn();
+const nextCallingWindowStart = jest.fn();
+jest.mock("./compliance/callingHours", () => ({
+  isWithinCallingHours: (...args: unknown[]) => isWithinCallingHours(...args),
+  nextCallingWindowStart: (...args: unknown[]) => nextCallingWindowStart(...args),
 }));
 
 import { createCampaign, processCampaignContactJob, startCampaign } from "./campaignService";
+
+beforeEach(() => {
+  isWithinCallingHours.mockReturnValue(true); // default: every existing test dials as if within the legal window
+});
 
 describe("campaignService", () => {
   describe("createCampaign", () => {
@@ -136,6 +150,7 @@ describe("campaignService", () => {
         where: { id: "camp_1", status: "RUNNING" },
         data: { status: "COMPLETED" },
       });
+      expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", "lead_1", { requireConsent: true });
     });
 
     it("does not complete the campaign while PENDING contacts remain", async () => {
@@ -212,6 +227,45 @@ describe("campaignService", () => {
         where: { id: "cc_1" },
         data: { status: "FAILED", callId: "call_1" },
       });
+    });
+
+    it("marks a contact without on-file consent SKIPPED_NO_CONSENT", async () => {
+      campaignContactUpdateMany.mockResolvedValue({ count: 1 });
+      campaignContactFindUniqueOrThrow.mockResolvedValue({
+        id: "cc_1",
+        leadId: "lead_1",
+        campaignId: "camp_1",
+        lead: { phoneNumber: "+15551234567" },
+      });
+      placeOutboundCall.mockResolvedValue({ outcome: "skipped_no_consent" });
+      campaignContactCount.mockResolvedValue(0);
+
+      await processCampaignContactJob("cc_1");
+
+      expect(campaignContactUpdate).toHaveBeenCalledWith({
+        where: { id: "cc_1" },
+        data: { status: "SKIPPED_NO_CONSENT" },
+      });
+    });
+
+    it("outside the legal calling window: gives the claim back to PENDING and reschedules for the next window instead of dialing", async () => {
+      campaignContactUpdateMany.mockResolvedValue({ count: 1 });
+      campaignContactFindUniqueOrThrow.mockResolvedValue({
+        id: "cc_1",
+        leadId: "lead_1",
+        campaignId: "camp_1",
+        lead: { phoneNumber: "+12125551234" },
+      });
+      isWithinCallingHours.mockReturnValue(false);
+      const nextWindow = new Date("2026-01-16T13:00:00Z");
+      nextCallingWindowStart.mockReturnValue(nextWindow);
+
+      await processCampaignContactJob("cc_1");
+
+      expect(placeOutboundCall).not.toHaveBeenCalled();
+      expect(campaignContactUpdate).toHaveBeenCalledWith({ where: { id: "cc_1" }, data: { status: "PENDING" } });
+      expect(enqueueCampaignContactDialAt).toHaveBeenCalledWith("cc_1", nextWindow);
+      expect(campaignContactCount).not.toHaveBeenCalled(); // not exhausted-checked; the contact isn't done, just deferred
     });
 
     it("marks a DNC-listed contact SKIPPED_DNC", async () => {

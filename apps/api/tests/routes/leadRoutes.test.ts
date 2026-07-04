@@ -97,4 +97,35 @@ describe("Lead routes", () => {
 
     expect(res.status).toBe(204);
   });
+
+  it("POST /api/leads/:leadId/consent grants consent with a source and timestamp", async () => {
+    leadUpdate.mockResolvedValue({ id: "lead_1", consentStatus: "GRANTED" });
+
+    const res = await request(app).post("/api/leads/lead_1/consent").send({ granted: true, source: "web-form" });
+
+    expect(res.status).toBe(200);
+    expect(leadUpdate).toHaveBeenCalledWith({
+      where: { id: "lead_1" },
+      data: { consentStatus: "GRANTED", consentSource: "web-form", consentedAt: expect.any(Date) },
+    });
+  });
+
+  it("POST /api/leads/:leadId/consent revokes consent", async () => {
+    leadUpdate.mockResolvedValue({ id: "lead_1", consentStatus: "REVOKED" });
+
+    const res = await request(app).post("/api/leads/lead_1/consent").send({ granted: false });
+
+    expect(res.status).toBe(200);
+    expect(leadUpdate).toHaveBeenCalledWith({
+      where: { id: "lead_1" },
+      data: { consentStatus: "REVOKED", consentedAt: expect.any(Date) },
+    });
+  });
+
+  it("POST /api/leads/:leadId/consent rejects a request missing the required granted field", async () => {
+    const res = await request(app).post("/api/leads/lead_1/consent").send({ source: "web-form" });
+
+    expect(res.status).toBe(400);
+    expect(leadUpdate).not.toHaveBeenCalled();
+  });
 });

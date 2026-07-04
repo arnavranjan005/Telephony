@@ -26,7 +26,7 @@ import request from "supertest";
 import { Worker } from "bullmq";
 import { createApp } from "../../api/src/app";
 import { startWorker } from "../../worker/src/worker";
-import { prisma, CampaignStatus, CampaignContactStatus, FollowUpStatus, CallStatus } from "@telephony/database";
+import { prisma, CampaignStatus, CampaignContactStatus, FollowUpStatus, CallStatus, ConsentStatus } from "@telephony/database";
 import { dialQueue } from "@telephony/queue";
 
 const app = createApp();
@@ -90,6 +90,7 @@ describe("call lifecycle e2e (real Postgres + Redis)", () => {
   it("dispatches a follow-up through the real queue and worker, dialing via the mocked Telnyx client, and finalizes it COMPLETED once the call ends", async () => {
     const leadRes = await request(app).post("/api/leads").send({ phoneNumber: "+15551110001" });
     const leadId = leadRes.body.lead.id;
+    await prisma.lead.update({ where: { id: leadId }, data: { consentStatus: ConsentStatus.GRANTED } });
 
     const followUpRes = await request(app)
       .post("/api/followups")
@@ -134,6 +135,7 @@ describe("call lifecycle e2e (real Postgres + Redis)", () => {
   it("marks a follow-up FAILED when its dialed call is never answered", async () => {
     const leadRes = await request(app).post("/api/leads").send({ phoneNumber: "+15551110002" });
     const leadId = leadRes.body.lead.id;
+    await prisma.lead.update({ where: { id: leadId }, data: { consentStatus: ConsentStatus.GRANTED } });
 
     const followUpRes = await request(app)
       .post("/api/followups")
@@ -186,6 +188,9 @@ describe("call lifecycle e2e (real Postgres + Redis)", () => {
     const campaignId = createRes.body.campaign.id;
     expect(createRes.body.campaign.contacts).toHaveLength(3);
 
+    const leadIds = createRes.body.campaign.contacts.map((c: { leadId: string }) => c.leadId);
+    await prisma.lead.updateMany({ where: { id: { in: leadIds } }, data: { consentStatus: ConsentStatus.GRANTED } });
+
     const startRes = await request(app).post(`/api/campaigns/${campaignId}/start`);
     expect(startRes.status).toBe(200);
     expect(startRes.body.campaign.status).toBe(CampaignStatus.RUNNING);
@@ -232,6 +237,7 @@ describe("call lifecycle e2e (real Postgres + Redis)", () => {
   it("proves the distributed claim guard: concurrent processing of the same follow-up only dials once", async () => {
     const leadRes = await request(app).post("/api/leads").send({ phoneNumber: "+15553330001" });
     const leadId = leadRes.body.lead.id;
+    await prisma.lead.update({ where: { id: leadId }, data: { consentStatus: ConsentStatus.GRANTED } });
 
     const followUp = await prisma.followUp.create({
       data: { leadId, scheduledAt: new Date(), status: FollowUpStatus.PENDING },

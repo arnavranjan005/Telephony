@@ -3,6 +3,9 @@ import { z } from "zod";
 export const LeadStatusValues = ["COLD", "WARM", "HOT"] as const;
 export type LeadStatus = (typeof LeadStatusValues)[number];
 
+export const ConsentStatusValues = ["UNKNOWN", "GRANTED", "REVOKED"] as const;
+export type ConsentStatus = (typeof ConsentStatusValues)[number];
+
 export interface Lead {
   id: string;
   firstName: string | null;
@@ -11,6 +14,9 @@ export interface Lead {
   email: string | null;
   status: LeadStatus;
   notes: string | null;
+  consentStatus: ConsentStatus;
+  consentSource: string | null;
+  consentedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -29,3 +35,9 @@ export const updateLeadSchema = createLeadSchema.partial().omit({ phoneNumber: t
   phoneNumber: z.string().min(1).optional(),
 });
 export type UpdateLeadInput = z.infer<typeof updateLeadSchema>;
+
+export const setLeadConsentSchema = z.object({
+  granted: z.boolean(),
+  source: z.string().optional(),
+});
+export type SetLeadConsentInput = z.infer<typeof setLeadConsentSchema>;

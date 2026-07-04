@@ -13,6 +13,16 @@ enum LeadStatus {
   HOT
 }
 
+// TCPA-relevant consent to be contacted via an automated/AI-voice dialer.
+// UNKNOWN is the default for every new lead - automated (campaign/follow-up)
+// dials require GRANTED before they'll place a call; manual one-off calls
+// (POST /api/calls/outbound) are not gated on this.
+enum ConsentStatus {
+  UNKNOWN
+  GRANTED
+  REVOKED
+}
+
 enum CallDirection {
   INBOUND
   OUTBOUND
@@ -57,6 +67,7 @@ enum CampaignContactStatus {
   CALLED
   FAILED
   SKIPPED_DNC
+  SKIPPED_NO_CONSENT
 }
 
 enum FollowUpStatus {
@@ -66,6 +77,7 @@ enum FollowUpStatus {
   FAILED
   CANCELED
   SKIPPED_DNC
+  SKIPPED_NO_CONSENT
 }
 
 enum DncSource {
@@ -81,6 +93,9 @@ model Lead {
   email       String?
   status      LeadStatus @default(COLD)
   notes       String?
+  consentStatus ConsentStatus @default(UNKNOWN)
+  consentSource String?
+  consentedAt   DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
