@@ -26,12 +26,14 @@ const placeOutboundCall = jest.fn();
 const answerCall = jest.fn();
 const speakText = jest.fn();
 const startTranscription = jest.fn();
+const finalizeDialOutcome = jest.fn();
 
 jest.mock("@telephony/domain", () => ({
   placeOutboundCall: (...args: unknown[]) => placeOutboundCall(...args),
   answerCall: (...args: unknown[]) => answerCall(...args),
   speakText: (...args: unknown[]) => speakText(...args),
   startTranscription: (...args: unknown[]) => startTranscription(...args),
+  finalizeDialOutcome: (...args: unknown[]) => finalizeDialOutcome(...args),
   decodeClientState: (clientState?: string) => {
     if (!clientState) return {};
     try {
@@ -131,6 +133,7 @@ describe("Call routes", () => {
     expect(callUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ where: { telnyxCallControlId: "ctrl_1" } })
     );
+    expect(finalizeDialOutcome).toHaveBeenCalledWith("call_1", "COMPLETED");
   });
 
   describe("call.initiated (inbound)", () => {
@@ -184,6 +187,7 @@ describe("Call routes", () => {
       expect(callUpdate).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED", outcome: "normal_clearing" }) })
       );
+      expect(finalizeDialOutcome).toHaveBeenCalledWith("call_1", "COMPLETED");
     });
 
     it.each([
@@ -201,6 +205,7 @@ describe("Call routes", () => {
       expect(callUpdate).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ status: expectedStatus, outcome: hangupCause }) })
       );
+      expect(finalizeDialOutcome).toHaveBeenCalledWith("call_1", expectedStatus);
     });
   });
 });

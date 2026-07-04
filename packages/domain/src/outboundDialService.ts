@@ -1,4 +1,4 @@
-import { CallDirection, CallStatus, prisma } from "@telephony/database";
+import { CallDirection, CallStatus, CampaignContactStatus, FollowUpStatus, prisma } from "@telephony/database";
 import { initiateOutboundCall } from "./telnyx/callService";
 import { isNumberOnDnc } from "./dncService";
 
@@ -43,5 +43,39 @@ export async function placeOutboundCall(toNumber: string, leadId?: string): Prom
   } catch (error) {
     await prisma.call.update({ where: { id: call.id }, data: { status: CallStatus.FAILED } });
     return { outcome: "failed", error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * Finalizes whatever follow-up/campaign-contact originated a call once that
+ * call actually ends (i.e. once callController's call.hangup handler has
+ * resolved a terminal CallStatus). Without this, a successfully-placed dial
+ * leaves its FollowUp/CampaignContact stuck at CALLING forever - dialing
+ * only ever claims the row and hands off to Telnyx, nothing downstream ever
+ * looked at how the call actually went.
+ *
+ * Both tables collapse every non-COMPLETED outcome (BUSY, NO_ANSWER,
+ * CANCELED, FAILED) to FAILED - neither FollowUpStatus nor
+ * CampaignContactStatus has a busy/no-answer-specific value today, so the
+ * finer distinction stays on the Call row itself (status/outcome) rather
+ * than being lost.
+ *
+ * Only matches rows still CALLING, so a redelivered call.hangup webhook
+ * (Telnyx does retry) is a safe no-op on the second delivery.
+ */
+export async function finalizeDialOutcome(callId: string, callStatus: CallStatus): Promise<void> {
+  const isSuccess = callStatus === CallStatus.COMPLETED;
+
+  await prisma.followUp.updateMany({
+    where: { callId, status: FollowUpStatus.CALLING },
+    data: { status: isSuccess ? FollowUpStatus.COMPLETED : FollowUpStatus.FAILED },
+  });
+
+  const campaignContact = await prisma.campaignContact.findUnique({ where: { callId } });
+  if (campaignContact?.status === CampaignContactStatus.CALLING) {
+    await prisma.campaignContact.update({
+      where: { id: campaignContact.id },
+      data: { status: isSuccess ? CampaignContactStatus.CALLED : CampaignContactStatus.FAILED },
+    });
   }
 }

@@ -112,6 +112,12 @@ async function setUpAnsweredInboundCall(callControlId: string, fromNumber: strin
 }
 
 afterAll(async () => {
+  // Obliterate (not just close) - the "dial" queue/rate-limiter state lives in
+  // Redis, shared by every *.e2e-test.ts file within one --runInBand run, so
+  // leftover jobs from this file could otherwise bleed into the next file's
+  // tests (competing for rate-limiter throughput, or racing a later
+  // beforeEach's cleanup of the Postgres rows they still reference).
+  await dialQueue.obliterate({ force: true });
   await dialQueue.close();
   await prisma.$disconnect();
 });

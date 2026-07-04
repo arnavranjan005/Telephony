@@ -48,6 +48,12 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await worker.close();
+  // Obliterate (not just close) - the "dial" queue/rate-limiter state lives in
+  // Redis, shared by every *.e2e-test.ts file within one --runInBand run, so
+  // leftover jobs from this file could otherwise bleed into the next file's
+  // tests (competing for rate-limiter throughput, or racing a later
+  // beforeEach's cleanup of the Postgres rows they still reference).
+  await dialQueue.obliterate({ force: true });
   await dialQueue.close();
   await prisma.$disconnect();
 });
@@ -81,7 +87,7 @@ describe("call lifecycle e2e (real Postgres + Redis)", () => {
     expect(inDb).not.toBeNull();
   });
 
-  it("dispatches a follow-up through the real queue and worker, dialing via the mocked Telnyx client", async () => {
+  it("dispatches a follow-up through the real queue and worker, dialing via the mocked Telnyx client, and finalizes it COMPLETED once the call ends", async () => {
     const leadRes = await request(app).post("/api/leads").send({ phoneNumber: "+15551110001" });
     const leadId = leadRes.body.lead.id;
 
@@ -91,9 +97,9 @@ describe("call lifecycle e2e (real Postgres + Redis)", () => {
     expect(followUpRes.status).toBe(201);
     const followUpId = followUpRes.body.followUp.id;
 
-    // A successful dial leaves the follow-up in CALLING with callId set
-    // (status only moves to a terminal state once the call.hangup webhook
-    // fires, which is out of scope here) - so wait on callId instead.
+    // A successful dial leaves the follow-up in CALLING with callId set -
+    // status only moves to a terminal state once the call.hangup webhook
+    // fires (via finalizeDialOutcome) - so wait on callId first.
     await waitFor(async () => {
       const followUp = await prisma.followUp.findUniqueOrThrow({ where: { id: followUpId } });
       return followUp.callId !== null;
@@ -107,6 +113,43 @@ describe("call lifecycle e2e (real Postgres + Redis)", () => {
     const call = await prisma.call.findUniqueOrThrow({ where: { id: followUp.callId! } });
     expect(call.status).toBe(CallStatus.INITIATED);
     expect(call.telnyxCallControlId).toBe("test-call-control-1");
+
+    // Drive the call through answered -> hangup, same as a real Telnyx
+    // conversation, and prove the follow-up actually reaches a terminal
+    // status instead of staying CALLING forever.
+    await request(app).post("/api/calls/webhook").send({
+      data: { event_type: "call.answered", payload: { call_control_id: "test-call-control-1" } },
+    });
+    await waitFor(async () => (await prisma.call.findUniqueOrThrow({ where: { id: call.id } })).status === CallStatus.IN_PROGRESS);
+
+    await request(app).post("/api/calls/webhook").send({
+      data: {
+        event_type: "call.hangup",
+        payload: { call_control_id: "test-call-control-1", hangup_cause: "normal_clearing" },
+      },
+    });
+    await waitFor(async () => (await prisma.followUp.findUniqueOrThrow({ where: { id: followUpId } })).status === FollowUpStatus.COMPLETED);
+  });
+
+  it("marks a follow-up FAILED when its dialed call is never answered", async () => {
+    const leadRes = await request(app).post("/api/leads").send({ phoneNumber: "+15551110002" });
+    const leadId = leadRes.body.lead.id;
+
+    const followUpRes = await request(app)
+      .post("/api/followups")
+      .send({ leadId, scheduledAt: new Date().toISOString() });
+    const followUpId = followUpRes.body.followUp.id;
+
+    await waitFor(async () => (await prisma.followUp.findUniqueOrThrow({ where: { id: followUpId } })).callId !== null);
+    const followUp = await prisma.followUp.findUniqueOrThrow({ where: { id: followUpId } });
+    const callControlId = (await prisma.call.findUniqueOrThrow({ where: { id: followUp.callId! } })).telnyxCallControlId;
+
+    // No call.answered this time - the call rings out unanswered.
+    await request(app).post("/api/calls/webhook").send({
+      data: { event_type: "call.hangup", payload: { call_control_id: callControlId, hangup_cause: "no_answer" } },
+    });
+
+    await waitFor(async () => (await prisma.followUp.findUniqueOrThrow({ where: { id: followUpId } })).status === FollowUpStatus.FAILED);
   });
 
   it("skips dialing a follow-up for a lead on the DNC list", async () => {
@@ -148,9 +191,9 @@ describe("call lifecycle e2e (real Postgres + Redis)", () => {
     expect(startRes.body.campaign.status).toBe(CampaignStatus.RUNNING);
 
     // Every contact should get claimed (off PENDING) and dialed (callId set)
-    // - a successful dial leaves status at CALLING with callId set, it only
-    // moves to a terminal state via the call.hangup webhook (out of scope
-    // here), so wait on callId rather than a terminal status.
+    // - a successful dial leaves status at CALLING with callId set; it only
+    // moves to CALLED once its call.hangup webhook fires (via
+    // finalizeDialOutcome), so wait on callId first.
     await waitFor(async () => {
       const contacts = await prisma.campaignContact.findMany({ where: { campaignId } });
       return contacts.length === 3 && contacts.every((c) => c.callId !== null);
@@ -164,7 +207,27 @@ describe("call lifecycle e2e (real Postgres + Redis)", () => {
       const campaign = await prisma.campaign.findUniqueOrThrow({ where: { id: campaignId } });
       return campaign.status === CampaignStatus.COMPLETED;
     });
-  });
+
+    // Answer and hang up every contact's call, and prove each contact
+    // actually reaches CALLED instead of staying CALLING forever.
+    for (const contact of contacts) {
+      const contactCall = await prisma.call.findUniqueOrThrow({ where: { id: contact.callId! } });
+      await request(app).post("/api/calls/webhook").send({
+        data: { event_type: "call.answered", payload: { call_control_id: contactCall.telnyxCallControlId } },
+      });
+      await request(app).post("/api/calls/webhook").send({
+        data: {
+          event_type: "call.hangup",
+          payload: { call_control_id: contactCall.telnyxCallControlId, hangup_cause: "normal_clearing" },
+        },
+      });
+    }
+
+    await waitFor(async () => {
+      const finalContacts = await prisma.campaignContact.findMany({ where: { campaignId } });
+      return finalContacts.every((c) => c.status === CampaignContactStatus.CALLED);
+    }, 20000);
+  }, 25000);
 
   it("proves the distributed claim guard: concurrent processing of the same follow-up only dials once", async () => {
     const leadRes = await request(app).post("/api/leads").send({ phoneNumber: "+15553330001" });

@@ -1,4 +1,4 @@
-export { placeOutboundCall } from "./outboundDialService";
+export { placeOutboundCall, finalizeDialOutcome } from "./outboundDialService";
 export type { DialResult } from "./outboundDialService";
 
 export {
