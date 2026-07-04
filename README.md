@@ -297,6 +297,24 @@ loop) runs unmocked:
   utterance through the real `conversationRunner` loop and the real calendar/compliance tool handlers,
   proving it lands in a real `Appointment` row (booking) or a real `DncEntry` row (opt-out), and that the
   final reply is actually spoken back over the (mocked) call.
+- `calendarOAuth.e2e-test.ts` — mocks only `googleapis`'s `OAuth2` client; drives the real
+  `/api/calendar/oauth/url` and `/oauth/callback` routes. No Postgres writes happen on this path, so
+  there's no DB fixture cleanup in this spec.
+- `sseCallEvents.e2e-test.ts` — mocks `telnyx`; opens a real TCP connection (supertest can't drive a
+  streaming response, since it waits for the response to end, which SSE never does) to
+  `GET /api/calls/:callId/events` and drives the real inbound webhook lifecycle, proving
+  `call.answered`/`call.hangup` events published by `callController` arrive over the wire in real time,
+  and that a connection only receives events for the call it subscribed to.
+- `campaignAndFollowUpControls.e2e-test.ts` — mocks `telnyx`; boots a real in-process BullMQ `Worker`
+  and proves three control-flow behaviors against real Postgres + Redis: canceling a follow-up before
+  its delayed job fires actually prevents the dial (the job stays enqueued, but `processFollowUpJob`'s
+  atomic PENDING-only claim turns it into a no-op); the dial rate limiter (`DIAL_RATE_LIMIT_MAX` per
+  `DIAL_RATE_LIMIT_DURATION_MS`) genuinely throttles a burst of campaign contacts rather than dialing
+  them all at once; and pausing a running campaign actually stops its still-queued contacts from being
+  dialed — `processCampaignContactJob`'s atomic claim requires `campaign.status === RUNNING`, so
+  contacts not yet claimed when the pause lands stay `PENDING` (a contact already claimed the instant
+  before pause still completes that one in-flight dial - you can't un-ring a phone that already rang)
+  and get picked up again the next time the campaign is started.
 
 A `docker-compose.yml` at the repo root defines throwaway Postgres (`localhost:55432`) and Redis
 (`localhost:56379`) containers on non-default ports, so they won't collide with anything else you have

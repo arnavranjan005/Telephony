@@ -93,15 +93,23 @@ async function completeCampaignIfExhausted(campaignId: string) {
  * Processes one campaign-contact dial job. Atomically claims the row
  * (PENDING -> CALLING via a conditional UPDATE) before dialing, so if two
  * workers race on the same row - or the reconciliation sweep re-enqueues a
- * row something else already claimed - only one of them actually dials.
+ * row something else already claimed - only one of them actually dials. The
+ * claim also requires the campaign to still be RUNNING, so pausing a
+ * campaign actually stops its still-queued contacts from being dialed
+ * instead of just relabeling the campaign row - they stay PENDING and get
+ * picked up again the next time the campaign is started.
  * Called by the worker; safe to call multiple times for the same id.
  */
 export async function processCampaignContactJob(campaignContactId: string): Promise<void> {
   const claimed = await prisma.campaignContact.updateMany({
-    where: { id: campaignContactId, status: CampaignContactStatus.PENDING },
+    where: {
+      id: campaignContactId,
+      status: CampaignContactStatus.PENDING,
+      campaign: { status: CampaignStatus.RUNNING },
+    },
     data: { status: CampaignContactStatus.CALLING, attemptedAt: new Date() },
   });
-  if (claimed.count === 0) return; // already claimed or completed elsewhere
+  if (claimed.count === 0) return; // already claimed/completed elsewhere, or campaign isn't RUNNING
 
   const contact = await prisma.campaignContact.findUniqueOrThrow({
     where: { id: campaignContactId },

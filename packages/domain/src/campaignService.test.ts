@@ -128,7 +128,7 @@ describe("campaignService", () => {
       await processCampaignContactJob("cc_1");
 
       expect(campaignContactUpdateMany).toHaveBeenCalledWith({
-        where: { id: "cc_1", status: "PENDING" },
+        where: { id: "cc_1", status: "PENDING", campaign: { status: "RUNNING" } },
         data: { status: "CALLING", attemptedAt: expect.any(Date) },
       });
       expect(campaignContactUpdate).toHaveBeenCalledWith({ where: { id: "cc_1" }, data: { callId: "call_1" } });
@@ -159,6 +159,22 @@ describe("campaignService", () => {
 
       await processCampaignContactJob("cc_1");
 
+      expect(campaignContactFindUniqueOrThrow).not.toHaveBeenCalled();
+      expect(placeOutboundCall).not.toHaveBeenCalled();
+    });
+
+    it("does not dial and leaves the contact PENDING when the campaign is not RUNNING (e.g. PAUSED)", async () => {
+      // The claim's WHERE requires campaign.status === RUNNING, so a paused
+      // campaign's row simply fails to match - same "count: 0" no-op path as
+      // any other failed claim, just for a different reason.
+      campaignContactUpdateMany.mockResolvedValue({ count: 0 });
+
+      await processCampaignContactJob("cc_1");
+
+      expect(campaignContactUpdateMany).toHaveBeenCalledWith({
+        where: { id: "cc_1", status: "PENDING", campaign: { status: "RUNNING" } },
+        data: { status: "CALLING", attemptedAt: expect.any(Date) },
+      });
       expect(campaignContactFindUniqueOrThrow).not.toHaveBeenCalled();
       expect(placeOutboundCall).not.toHaveBeenCalled();
     });

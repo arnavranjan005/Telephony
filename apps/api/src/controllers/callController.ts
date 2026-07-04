@@ -1,7 +1,14 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma, CallStatus, CallDirection } from "@telephony/database";
-import { answerCall, decodeClientState, speakText, startTranscription, placeOutboundCall } from "@telephony/domain";
+import {
+  answerCall,
+  decodeClientState,
+  speakText,
+  startTranscription,
+  placeOutboundCall,
+  finalizeDialOutcome,
+} from "@telephony/domain";
 import { verifyTelnyxSignature } from "../telnyx/webhookVerifier";
 import { handleCallerUtterance } from "../callConversationService";
 import { callEventBus } from "../sse/eventBus";
@@ -175,6 +182,7 @@ export async function handleTelnyxWebhook(req: Request, res: Response) {
           where: { telnyxCallControlId: callControlId },
           data: { status, endedAt: new Date(), outcome: payload.hangup_cause ?? null },
         });
+        await finalizeDialOutcome(call.id, status);
         callEventBus.publish(call.id, "call.hangup", { hangupCause: payload.hangup_cause, status });
         break;
       }
