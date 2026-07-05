@@ -1,5 +1,5 @@
-import { FollowUpStatus, prisma } from "@telephony/database";
-import { enqueueFollowUpDial, enqueueFollowUpDialAt } from "@telephony/queue";
+import { FollowUp, FollowUpStatus, prisma } from "@telephony/database";
+import { enqueueFollowUpDial, enqueueFollowUpDialAt, removeFollowUpDialJobs } from "@telephony/queue";
 import { env } from "@telephony/config";
 import { placeOutboundCall } from "./outboundDialService";
 import { isWithinCallingHours, nextCallingWindowStart } from "./compliance/callingHours";
@@ -29,8 +29,67 @@ export async function listFollowUps(status?: FollowUpStatus) {
   });
 }
 
-export async function cancelFollowUp(id: string) {
-  return prisma.followUp.update({ where: { id }, data: { status: FollowUpStatus.CANCELED } });
+export type CancelFollowUpResult =
+  | { outcome: "canceled"; followUp: FollowUp }
+  | { outcome: "not_cancelable"; followUp: FollowUp }
+  | { outcome: "not_found" };
+
+/**
+ * Atomically cancels a follow-up: the CANCELED transition only lands via a
+ * conditional UPDATE gated on the row still being PENDING - the same
+ * compare-and-swap pattern processFollowUpJob uses to claim a row for
+ * dialing - so a cancel racing the worker's own PENDING -> CALLING claim
+ * can't corrupt either side; exactly one of them wins, and the loser is told
+ * so instead of silently overwriting the winner's status. Canceling
+ * something already CALLING/COMPLETED/FAILED is reported as not_cancelable
+ * rather than blindly forced to CANCELED. Repeating a cancel on an
+ * already-CANCELED row is a no-op success, so it's safe to call from an AI
+ * tool the model might invoke twice, or a retried client request.
+ *
+ * Winning the claim also removes the row's pending BullMQ dial job(s), so
+ * canceling actually unwinds the "this will place a call later" side effect
+ * instead of just flipping a status flag and leaving a dead job to fire and
+ * no-op on its own later.
+ */
+export async function cancelFollowUp(id: string): Promise<CancelFollowUpResult> {
+  const claimed = await prisma.followUp.updateMany({
+    where: { id, status: FollowUpStatus.PENDING },
+    data: { status: FollowUpStatus.CANCELED },
+  });
+
+  if (claimed.count === 1) {
+    await removeFollowUpDialJobs(id);
+    return { outcome: "canceled", followUp: await prisma.followUp.findUniqueOrThrow({ where: { id } }) };
+  }
+
+  const followUp = await prisma.followUp.findUnique({ where: { id } });
+  if (!followUp) return { outcome: "not_found" };
+  if (followUp.status === FollowUpStatus.CANCELED) return { outcome: "canceled", followUp };
+  return { outcome: "not_cancelable", followUp };
+}
+
+/**
+ * Finds the most recent still-cancelable (PENDING) follow-up for a lead, so
+ * a caller (e.g. the AI agent's cancel_followup tool) can cancel "the
+ * callback we just scheduled" without already knowing its id. Prefers one
+ * originating from the current call when given, since that's almost always
+ * what's meant mid-conversation; falls back to the lead's most recent
+ * pending callback from any call otherwise.
+ */
+export async function findCancelableFollowUpId(params: { leadId: string; callId?: string }): Promise<string | null> {
+  if (params.callId) {
+    const scoped = await prisma.followUp.findFirst({
+      where: { leadId: params.leadId, callId: params.callId, status: FollowUpStatus.PENDING },
+      orderBy: { createdAt: "desc" },
+    });
+    if (scoped) return scoped.id;
+  }
+
+  const mostRecent = await prisma.followUp.findFirst({
+    where: { leadId: params.leadId, status: FollowUpStatus.PENDING },
+    orderBy: { createdAt: "desc" },
+  });
+  return mostRecent?.id ?? null;
 }
 
 /**

@@ -89,6 +89,7 @@ describe("calendarService", () => {
     expect(eventsInsert).toHaveBeenCalledWith(
       expect.objectContaining({
         calendarId: "primary",
+        sendUpdates: "all",
         requestBody: expect.objectContaining({
           summary: "Consultation call",
           start: { dateTime: "2025-01-15T14:00:00Z", timeZone: "UTC" },
@@ -99,9 +100,9 @@ describe("calendarService", () => {
     );
   });
 
-  it("cancelAppointment deletes the event by id", async () => {
+  it("cancelAppointment deletes the event by id and notifies attendees of the cancellation", async () => {
     eventsDelete.mockResolvedValue({});
     await cancelAppointment("evt_123");
-    expect(eventsDelete).toHaveBeenCalledWith({ calendarId: "primary", eventId: "evt_123" });
+    expect(eventsDelete).toHaveBeenCalledWith({ calendarId: "primary", eventId: "evt_123", sendUpdates: "all" });
   });
 });

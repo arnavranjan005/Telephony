@@ -6,6 +6,7 @@ export {
   enqueueCampaignContactDialAt,
   enqueueFollowUpDial,
   enqueueFollowUpDialAt,
+  removeFollowUpDialJobs,
   followUpJobId,
   campaignContactJobId,
 } from "./dialQueue";

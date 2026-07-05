@@ -1,11 +1,15 @@
 const createFollowUp = jest.fn();
 const isWithinCallingHours = jest.fn();
 const nextCallingWindowStart = jest.fn();
+const cancelFollowUp = jest.fn();
+const findCancelableFollowUpId = jest.fn();
 
 jest.mock("@telephony/domain", () => ({
   createFollowUp: (...args: unknown[]) => createFollowUp(...args),
   isWithinCallingHours: (...args: unknown[]) => isWithinCallingHours(...args),
   nextCallingWindowStart: (...args: unknown[]) => nextCallingWindowStart(...args),
+  cancelFollowUp: (...args: unknown[]) => cancelFollowUp(...args),
+  findCancelableFollowUpId: (...args: unknown[]) => findCancelableFollowUpId(...args),
 }));
 
 import { buildFollowUpTools } from "./followUpTools";
@@ -80,5 +84,60 @@ describe("followUpTools", () => {
     expect(createFollowUp).toHaveBeenCalledWith(
       expect.objectContaining({ leadId: "lead_1", streamingEnabled: true })
     );
+  });
+
+  describe("cancel_followup", () => {
+    it("cancels the explicitly given followUpId without looking one up", async () => {
+      cancelFollowUp.mockResolvedValue({ outcome: "canceled", followUp: { id: "fu_explicit" } });
+
+      const [, cancelTool] = buildFollowUpTools({ leadId: "lead_1" });
+      const result = await cancelTool.handler({ followUpId: "fu_explicit" });
+
+      expect(result).toEqual({ canceled: true, followUpId: "fu_explicit" });
+      expect(findCancelableFollowUpId).not.toHaveBeenCalled();
+      expect(cancelFollowUp).toHaveBeenCalledWith("fu_explicit");
+    });
+
+    it("looks up the most recent pending follow-up, scoped to the current call, when no id is given", async () => {
+      findCancelableFollowUpId.mockResolvedValue("fu_found");
+      cancelFollowUp.mockResolvedValue({ outcome: "canceled", followUp: { id: "fu_found" } });
+
+      const [, cancelTool] = buildFollowUpTools({ leadId: "lead_1", callId: "call_1" });
+      const result = await cancelTool.handler({});
+
+      expect(findCancelableFollowUpId).toHaveBeenCalledWith({ leadId: "lead_1", callId: "call_1" });
+      expect(cancelFollowUp).toHaveBeenCalledWith("fu_found");
+      expect(result).toEqual({ canceled: true, followUpId: "fu_found" });
+    });
+
+    it("reports failure when there's no pending callback to find", async () => {
+      findCancelableFollowUpId.mockResolvedValue(null);
+
+      const [, cancelTool] = buildFollowUpTools({ leadId: "lead_1" });
+      const result = await cancelTool.handler({});
+
+      expect(result).toEqual({ canceled: false, reason: "No pending callback found for this lead" });
+      expect(cancelFollowUp).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op when there is no lead associated with the call", async () => {
+      const [, cancelTool] = buildFollowUpTools({});
+      const result = await cancelTool.handler({ followUpId: "fu_1" });
+
+      expect(result).toEqual({ canceled: false, reason: "No lead associated with this call" });
+      expect(cancelFollowUp).not.toHaveBeenCalled();
+    });
+
+    it("surfaces not_cancelable as a clear failure reason", async () => {
+      cancelFollowUp.mockResolvedValue({ outcome: "not_cancelable", followUp: { id: "fu_1" } });
+
+      const [, cancelTool] = buildFollowUpTools({ leadId: "lead_1" });
+      const result = await cancelTool.handler({ followUpId: "fu_1" });
+
+      expect(result).toEqual({
+        canceled: false,
+        reason: "That callback is already in progress or resolved and can't be canceled",
+      });
+    });
   });
 });

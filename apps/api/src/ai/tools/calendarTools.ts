@@ -1,5 +1,6 @@
 import { ToolDefinition } from "../types";
 import { createAppointment, isSlotAvailable } from "../../google-calendar/calendarService";
+import { cancelAppointmentById, findCancelableAppointmentId } from "../../appointmentService";
 import { prisma } from "@telephony/database";
 
 export interface CalendarToolContext {
@@ -33,7 +34,8 @@ export function buildCalendarTools(context: CalendarToolContext): ToolDefinition
   const scheduleAppointment: ToolDefinition = {
     name: "schedule_appointment",
     description:
-      "Book an appointment on the calendar for the current lead/caller. Only call this after confirming availability and getting the caller's verbal confirmation.",
+      "Book an appointment on the calendar for the current lead/caller. Only call this after confirming availability and getting the caller's verbal confirmation. " +
+      "If the caller already has an appointment booked and wants a different time instead, call cancel_appointment first.",
     parameters: {
       type: "object",
       properties: {
@@ -75,5 +77,42 @@ export function buildCalendarTools(context: CalendarToolContext): ToolDefinition
     },
   };
 
-  return [checkAvailability, scheduleAppointment];
+  const cancelAppointmentTool: ToolDefinition = {
+    name: "cancel_appointment",
+    description:
+      "Cancel a previously booked appointment for this lead/caller - e.g. the caller wants a different time or no longer wants it. " +
+      "Call this BEFORE booking a replacement with schedule_appointment, so the old slot doesn't stay booked alongside the new one. " +
+      "If you already know the appointmentId from an earlier schedule_appointment result in this conversation, pass it; " +
+      "otherwise leave it out and the most recent appointment for this lead will be canceled.",
+    parameters: {
+      type: "object",
+      properties: {
+        appointmentId: { type: "string", description: "The appointment id to cancel, if already known" },
+      },
+    },
+    handler: async (args) => {
+      if (!context.leadId) {
+        return { canceled: false, reason: "No lead associated with this call" };
+      }
+
+      const appointmentId =
+        (args.appointmentId as string | undefined) ??
+        (await findCancelableAppointmentId({ leadId: context.leadId, callId: context.callId }));
+
+      if (!appointmentId) {
+        return { canceled: false, reason: "No cancelable appointment found for this lead" };
+      }
+
+      const result = await cancelAppointmentById(appointmentId);
+      if (result.outcome === "not_found") {
+        return { canceled: false, reason: "Appointment not found" };
+      }
+      if (result.outcome === "not_cancelable") {
+        return { canceled: false, reason: "That appointment is already completed and can't be canceled" };
+      }
+      return { canceled: true, appointmentId: result.appointment.id };
+    },
+  };
+
+  return [checkAvailability, scheduleAppointment, cancelAppointmentTool];
 }

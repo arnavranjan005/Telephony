@@ -74,3 +74,27 @@ export async function enqueueCampaignContactDialAt(campaignContactId: string, ru
     }
   );
 }
+
+/**
+ * Removes any not-yet-started BullMQ job(s) for a follow-up, so canceling it
+ * actually unwinds the "this will place a call later" side effect instead of
+ * just flipping the DB status and leaving the job to fire and no-op later.
+ * Scans for the job by data (not just the deterministic `followup-<id>` id),
+ * because a follow-up rescheduled past the TCPA calling-hours window
+ * (enqueueFollowUpDialAt) lives under a different, timestamp-suffixed job id
+ * that can't be reconstructed from just the follow-up id.
+ *
+ * Only targets "delayed"/"waiting" jobs - an "active" job (a worker already
+ * running processFollowUpJob) is deliberately left alone: its own atomic
+ * PENDING-only claim already makes it a safe no-op once the DB row is
+ * CANCELED, so removal here is queue hygiene, not a correctness requirement,
+ * and BullMQ refuses to remove a locked/active job anyway.
+ */
+export async function removeFollowUpDialJobs(followUpId: string): Promise<void> {
+  const jobs = await dialQueue.getJobs(["delayed", "waiting"]);
+  await Promise.all(
+    jobs
+      .filter((job) => job.data.type === "followup" && job.data.followUpId === followUpId)
+      .map((job) => job.remove().catch(() => undefined))
+  );
+}

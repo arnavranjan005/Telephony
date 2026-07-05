@@ -181,7 +181,11 @@ describe("appointment scheduling e2e (real Postgres, mocked Google Calendar SDK)
 
     expect(cancelRes.status).toBe(200);
     expect(cancelRes.body.appointment.status).toBe(AppointmentStatus.CANCELED);
-    expect(eventsDelete).toHaveBeenCalledWith({ calendarId: "primary", eventId: "evt_e2e_to_cancel" });
+    expect(eventsDelete).toHaveBeenCalledWith({
+      calendarId: "primary",
+      eventId: "evt_e2e_to_cancel",
+      sendUpdates: "all",
+    });
 
     const inDb = await prisma.appointment.findUnique({ where: { id: appointmentId } });
     expect(inDb?.status).toBe(AppointmentStatus.CANCELED);

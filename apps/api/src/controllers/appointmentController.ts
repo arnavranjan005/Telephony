@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { prisma, AppointmentStatus } from "@telephony/database";
-import { cancelAppointment as cancelGoogleEvent } from "../google-calendar/calendarService";
+import { cancelAppointmentById } from "../appointmentService";
 
 export async function listAppointments(req: Request, res: Response) {
   const status = req.query.status as AppointmentStatus | undefined;
@@ -22,23 +22,10 @@ export async function getAppointment(req: Request, res: Response) {
 }
 
 export async function cancelAppointment(req: Request, res: Response) {
-  const appointment = await prisma.appointment.findUnique({ where: { id: req.params.appointmentId } });
-  if (!appointment) return res.status(404).json({ error: "Appointment not found" });
-
-  // Already canceled - return the current state instead of re-calling
-  // Google's cancel API on an event that's already gone (which would error).
-  if (appointment.status === AppointmentStatus.CANCELED) {
-    return res.json({ appointment });
+  const result = await cancelAppointmentById(req.params.appointmentId);
+  if (result.outcome === "not_found") return res.status(404).json({ error: "Appointment not found" });
+  if (result.outcome === "not_cancelable") {
+    return res.status(409).json({ error: "Appointment can no longer be canceled", appointment: result.appointment });
   }
-
-  if (appointment.googleEventId) {
-    await cancelGoogleEvent(appointment.googleEventId);
-  }
-
-  const updated = await prisma.appointment.update({
-    where: { id: appointment.id },
-    data: { status: AppointmentStatus.CANCELED },
-  });
-
-  res.json({ appointment: updated });
+  res.json({ appointment: result.appointment });
 }
