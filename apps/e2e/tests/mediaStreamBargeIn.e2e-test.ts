@@ -129,8 +129,9 @@ import WebSocket from "ws";
 import request from "supertest";
 import { createApp } from "../../api/src/app";
 import { attachMediaStreamServer } from "../../api/src/media-stream/mediaStreamServer";
-import { prisma } from "@telephony/database";
-import { dialQueue } from "@telephony/queue";
+import { prisma, LeadStatus } from "@telephony/database";
+import { dialQueue, followUpJobId } from "@telephony/queue";
+import { nextCallingWindowStart } from "@telephony/domain";
 
 const app = createApp();
 let server: http.Server;
@@ -336,6 +337,125 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
     const messages = await prisma.conversationMessage.findMany({ where: { callId: call.id }, orderBy: { createdAt: "asc" } });
     const userMessages = messages.filter((m) => m.role === "USER");
     expect(userMessages.map((m) => m.content)).toEqual(["tell me about your hours", "what about Friday"]);
+
+    client.close();
+  });
+
+  it("negotiates a follow-up time outside legal calling hours to a real FollowUp row + enqueued BullMQ job, over the real stream", async () => {
+    // Same real (unmocked) domain function and area-code reasoning as the
+    // webhook-path equivalent in aiConversation.e2e-test.ts - proves the
+    // identical negotiation behavior holds when driven through
+    // CallStreamSession's tool set instead of the webhook conversation path.
+    const phoneNumber = "+12125557777";
+    const requestedOutOfWindow = new Date("2026-08-02T07:00:00Z");
+    const suggestedTime = nextCallingWindowStart(phoneNumber, requestedOutOfWindow);
+
+    await telnyxWebhook("call.initiated", { call_control_id: "cc-stream-3", from: phoneNumber, to: "+15550000000" });
+    await waitFor(async () => (await prisma.call.findUnique({ where: { telnyxCallControlId: "cc-stream-3" } })) !== null);
+    await telnyxWebhook("call.answered", { call_control_id: "cc-stream-3" });
+    await waitFor(() => telnyxAnswerCalls.length >= 1);
+    const call = await prisma.call.findUniqueOrThrow({ where: { telnyxCallControlId: "cc-stream-3" } });
+
+    const { ws: client, frames } = await openMediaStreamSocket("cc-stream-3");
+    await waitFor(() => frames.some((f) => f.event === "media")); // greeting
+    await waitFor(() => lastDeepgramSocket !== null);
+
+    scriptedReplies = [
+      {
+        content: null,
+        toolCalls: [
+          {
+            id: "call-1",
+            name: "schedule_followup",
+            args: { scheduledAt: requestedOutOfWindow.toISOString(), reason: "callback about pricing" },
+          },
+        ],
+      },
+      {
+        content: null,
+        toolCalls: [
+          {
+            id: "call-2",
+            name: "schedule_followup",
+            args: { scheduledAt: suggestedTime.toISOString(), reason: "callback about pricing" },
+          },
+        ],
+      },
+      { content: "Great, I'll call you back then.", toolCalls: [] },
+    ];
+
+    emitTranscript("can you call me back tomorrow at 3am my time about pricing", true, true);
+
+    await waitFor(async () => (await prisma.followUp.findFirst({ where: { leadId: call.leadId! } })) !== null, 15000);
+
+    const messages = await prisma.conversationMessage.findMany({ where: { callId: call.id }, orderBy: { createdAt: "asc" } });
+    expect(messages.map((m) => [m.role, m.toolName])).toEqual([
+      ["USER", null],
+      ["ASSISTANT", "schedule_followup"],
+      ["TOOL", "schedule_followup"],
+      ["ASSISTANT", "schedule_followup"],
+      ["TOOL", "schedule_followup"],
+      ["ASSISTANT", null],
+    ]);
+    expect(JSON.parse(messages[2].content)).toEqual({
+      scheduled: false,
+      reason: "Requested time is outside the legal calling window (8am-9pm local to this number)",
+      suggestedTime: suggestedTime.toISOString(),
+    });
+    const confirmedResult = JSON.parse(messages[4].content);
+    expect(confirmedResult.scheduled).toBe(true);
+
+    const followUps = await prisma.followUp.findMany({ where: { leadId: call.leadId! } });
+    expect(followUps).toHaveLength(1);
+    expect(followUps[0].scheduledAt.toISOString()).toBe(suggestedTime.toISOString());
+
+    const job = await dialQueue.getJob(followUpJobId(followUps[0].id));
+    expect(job).not.toBeUndefined();
+
+    // The confirmation was actually spoken back as real media frames.
+    await waitFor(() => frames.filter((f) => f.event === "media").length > 1);
+
+    client.close();
+  });
+
+  it("drives a caller utterance through update_lead_status to a real Lead row update, over the real stream", async () => {
+    await telnyxWebhook("call.initiated", { call_control_id: "cc-stream-4", from: "+15556668888", to: "+15550000000" });
+    await waitFor(async () => (await prisma.call.findUnique({ where: { telnyxCallControlId: "cc-stream-4" } })) !== null);
+    await telnyxWebhook("call.answered", { call_control_id: "cc-stream-4" });
+    await waitFor(() => telnyxAnswerCalls.length >= 1);
+    const call = await prisma.call.findUniqueOrThrow({ where: { telnyxCallControlId: "cc-stream-4" } });
+
+    const { ws: client, frames } = await openMediaStreamSocket("cc-stream-4");
+    await waitFor(() => frames.some((f) => f.event === "media")); // greeting
+    await waitFor(() => lastDeepgramSocket !== null);
+
+    scriptedReplies = [
+      {
+        content: null,
+        toolCalls: [
+          { id: "call-1", name: "update_lead_status", args: { status: "HOT", notes: "Ready to buy now, budget confirmed" } },
+        ],
+      },
+      { content: "Great, I've made a note of that. Anything else?", toolCalls: [] },
+    ];
+
+    emitTranscript("yes, I'm very interested and ready to buy right now", true, true);
+
+    await waitFor(async () => (await prisma.lead.findUniqueOrThrow({ where: { id: call.leadId! } })).status === LeadStatus.HOT, 15000);
+
+    const messages = await prisma.conversationMessage.findMany({ where: { callId: call.id }, orderBy: { createdAt: "asc" } });
+    expect(messages.map((m) => [m.role, m.toolName])).toEqual([
+      ["USER", null],
+      ["ASSISTANT", "update_lead_status"],
+      ["TOOL", "update_lead_status"],
+      ["ASSISTANT", null],
+    ]);
+    expect(JSON.parse(messages[2].content)).toEqual({ updated: true, leadId: call.leadId, status: "HOT" });
+
+    const lead = await prisma.lead.findUniqueOrThrow({ where: { id: call.leadId! } });
+    expect(lead.notes).toBe("Ready to buy now, budget confirmed");
+
+    await waitFor(() => frames.filter((f) => f.event === "media").length > 1);
 
     client.close();
   });
