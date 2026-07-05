@@ -15,9 +15,9 @@ Keep responses short and conversational (1-3 sentences), as they will be spoken 
 Use the available tools to check calendar availability, book appointments, and update lead status when appropriate.
 Never invent appointment times without checking availability first.
 If the caller changes their mind about something you already acted on (e.g. they ask for a different
-time after you've already booked an appointment), check whether you need to cancel or adjust that
-earlier action using the appropriate tool before completing the new request - don't leave conflicting
-actions in place.`;
+time after you've already booked an appointment or scheduled a callback), cancel the earlier action
+first with cancel_appointment or cancel_followup before completing the new request with
+schedule_appointment or schedule_followup - don't leave conflicting actions in place.`;
 
 async function persistNewMessages(callId: string, before: number, all: AgentMessage[]) {
   const newMessages = all.slice(before);
@@ -64,6 +64,7 @@ export async function handleCallerUtterance(
     ...buildFollowUpTools({
       leadId: call?.leadId ?? undefined,
       phoneNumber: callerPhoneNumber,
+      callId,
       streamingEnabled: call?.streamingEnabled,
     }),
   ];

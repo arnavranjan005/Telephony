@@ -62,6 +62,7 @@ export class CallStreamSession {
       ...buildFollowUpTools({
         leadId: call?.leadId ?? undefined,
         phoneNumber: callerPhoneNumber,
+        callId: this.options.callId,
         streamingEnabled: call?.streamingEnabled,
       }),
     ];

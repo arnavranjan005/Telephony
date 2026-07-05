@@ -1,9 +1,18 @@
 import { ToolDefinition } from "../types";
-import { createFollowUp, isWithinCallingHours, nextCallingWindowStart } from "@telephony/domain";
+import {
+  cancelFollowUp,
+  createFollowUp,
+  findCancelableFollowUpId,
+  isWithinCallingHours,
+  nextCallingWindowStart,
+} from "@telephony/domain";
 
 export interface FollowUpToolContext {
   leadId?: string;
   phoneNumber?: string;
+  /** The current call's id, used to prefer canceling a callback that
+   * originated from this same call when no explicit followUpId is given. */
+  callId?: string;
   /** Whether the *current* call is a streaming (barge-in capable) call -
    * inherited onto the scheduled callback so a follow-up promised mid a
    * streaming conversation is itself dialed in streaming mode later, without
@@ -31,7 +40,8 @@ export function buildFollowUpTools(context: FollowUpToolContext): ToolDefinition
     description:
       "Schedule an automatic callback to this lead at a future date/time. Use when the caller asks to be called back later, or when a promised follow-up is needed. " +
       "If the requested time falls outside the legal calling window (8am-9pm local to the caller's number), this will NOT schedule anything - it returns " +
-      "scheduled: false with a suggestedTime instead. Tell the caller the suggested time and ask if it works, then call this tool again once they confirm a time.",
+      "scheduled: false with a suggestedTime instead. Tell the caller the suggested time and ask if it works, then call this tool again once they confirm a time. " +
+      "If the caller already has a callback scheduled and wants a different time instead, call cancel_followup first.",
     parameters: {
       type: "object",
       properties: {
@@ -66,5 +76,41 @@ export function buildFollowUpTools(context: FollowUpToolContext): ToolDefinition
     },
   };
 
-  return [scheduleFollowUp];
+  const cancelFollowUpTool: ToolDefinition = {
+    name: "cancel_followup",
+    description:
+      "Cancel a previously scheduled callback for this lead - e.g. the caller no longer wants to be called back, or wants a different time. " +
+      "Call this BEFORE scheduling a replacement with schedule_followup. If you already know the followUpId from an earlier schedule_followup " +
+      "result in this conversation, pass it; otherwise the most recent pending callback for this lead will be canceled.",
+    parameters: {
+      type: "object",
+      properties: {
+        followUpId: { type: "string", description: "The follow-up id to cancel, if already known" },
+      },
+    },
+    handler: async (args) => {
+      if (!context.leadId) {
+        return { canceled: false, reason: "No lead associated with this call" };
+      }
+
+      const followUpId =
+        (args.followUpId as string | undefined) ??
+        (await findCancelableFollowUpId({ leadId: context.leadId, callId: context.callId }));
+
+      if (!followUpId) {
+        return { canceled: false, reason: "No pending callback found for this lead" };
+      }
+
+      const result = await cancelFollowUp(followUpId);
+      if (result.outcome === "not_found") {
+        return { canceled: false, reason: "Follow-up not found" };
+      }
+      if (result.outcome === "not_cancelable") {
+        return { canceled: false, reason: "That callback is already in progress or resolved and can't be canceled" };
+      }
+      return { canceled: true, followUpId: result.followUp.id };
+    },
+  };
+
+  return [scheduleFollowUp, cancelFollowUpTool];
 }

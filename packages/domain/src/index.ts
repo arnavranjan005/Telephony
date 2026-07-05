@@ -5,9 +5,10 @@ export {
   createFollowUp,
   listFollowUps,
   cancelFollowUp,
+  findCancelableFollowUpId,
   processFollowUpJob,
 } from "./followUpService";
-export type { CreateFollowUpInput } from "./followUpService";
+export type { CreateFollowUpInput, CancelFollowUpResult } from "./followUpService";
 
 export {
   createCampaign,

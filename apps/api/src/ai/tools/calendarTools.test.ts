@@ -11,12 +11,20 @@ jest.mock("@telephony/database", () => ({
   prisma: { appointment: { create: (...args: unknown[]) => appointmentCreate(...args) } },
 }));
 
+const cancelAppointmentById = jest.fn();
+const findCancelableAppointmentId = jest.fn();
+jest.mock("../../appointmentService", () => ({
+  cancelAppointmentById: (...args: unknown[]) => cancelAppointmentById(...args),
+  findCancelableAppointmentId: (...args: unknown[]) => findCancelableAppointmentId(...args),
+}));
+
 import { buildCalendarTools } from "./calendarTools";
 
 describe("calendarTools", () => {
   const tools = buildCalendarTools({ leadId: "lead_1", callId: "call_1" });
   const checkAvailability = tools.find((t) => t.name === "check_appointment_availability")!;
   const scheduleAppointment = tools.find((t) => t.name === "schedule_appointment")!;
+  const cancelAppointmentTool = tools.find((t) => t.name === "cancel_appointment")!;
 
   it("check_appointment_availability reports availability from the calendar service", async () => {
     isSlotAvailable.mockResolvedValue(true);
@@ -71,5 +79,52 @@ describe("calendarTools", () => {
         callId: "call_1",
       }),
     });
+  });
+
+  it("cancel_appointment cancels the explicitly given appointmentId without looking one up", async () => {
+    cancelAppointmentById.mockResolvedValue({ outcome: "canceled", appointment: { id: "appt_explicit" } });
+
+    const result = await cancelAppointmentTool.handler({ appointmentId: "appt_explicit" });
+
+    expect(result).toEqual({ canceled: true, appointmentId: "appt_explicit" });
+    expect(findCancelableAppointmentId).not.toHaveBeenCalled();
+    expect(cancelAppointmentById).toHaveBeenCalledWith("appt_explicit");
+  });
+
+  it("cancel_appointment looks up the most recent cancelable appointment when no id is given", async () => {
+    findCancelableAppointmentId.mockResolvedValue("appt_found");
+    cancelAppointmentById.mockResolvedValue({ outcome: "canceled", appointment: { id: "appt_found" } });
+
+    const result = await cancelAppointmentTool.handler({});
+
+    expect(findCancelableAppointmentId).toHaveBeenCalledWith({ leadId: "lead_1", callId: "call_1" });
+    expect(cancelAppointmentById).toHaveBeenCalledWith("appt_found");
+    expect(result).toEqual({ canceled: true, appointmentId: "appt_found" });
+  });
+
+  it("cancel_appointment reports failure when there's nothing cancelable to find", async () => {
+    findCancelableAppointmentId.mockResolvedValue(null);
+
+    const result = await cancelAppointmentTool.handler({});
+
+    expect(result).toEqual({ canceled: false, reason: "No cancelable appointment found for this lead" });
+    expect(cancelAppointmentById).not.toHaveBeenCalled();
+  });
+
+  it("cancel_appointment is a no-op when there is no lead associated with the call", async () => {
+    const [, , cancelTool] = buildCalendarTools({});
+
+    const result = await cancelTool.handler({ appointmentId: "appt_1" });
+
+    expect(result).toEqual({ canceled: false, reason: "No lead associated with this call" });
+    expect(cancelAppointmentById).not.toHaveBeenCalled();
+  });
+
+  it("cancel_appointment surfaces not_cancelable as a clear failure reason", async () => {
+    cancelAppointmentById.mockResolvedValue({ outcome: "not_cancelable", appointment: { id: "appt_1" } });
+
+    const result = await cancelAppointmentTool.handler({ appointmentId: "appt_1" });
+
+    expect(result).toEqual({ canceled: false, reason: "That appointment is already completed and can't be canceled" });
   });
 });

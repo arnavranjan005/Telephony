@@ -31,6 +31,10 @@ export async function getFollowUps(req: Request, res: Response) {
 }
 
 export async function postCancelFollowUp(req: Request, res: Response) {
-  const followUp = await cancelFollowUp(req.params.followUpId);
-  res.json({ followUp });
+  const result = await cancelFollowUp(req.params.followUpId);
+  if (result.outcome === "not_found") return res.status(404).json({ error: "Follow-up not found" });
+  if (result.outcome === "not_cancelable") {
+    return res.status(409).json({ error: "Follow-up can no longer be canceled", followUp: result.followUp });
+  }
+  res.json({ followUp: result.followUp });
 }

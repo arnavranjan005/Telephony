@@ -55,10 +55,22 @@ describe("Follow-up routes", () => {
   });
 
   it("POST /api/followups/:id/cancel cancels the follow-up", async () => {
-    cancelFollowUp.mockResolvedValue({ id: "fu_1", status: "CANCELED" });
+    cancelFollowUp.mockResolvedValue({ outcome: "canceled", followUp: { id: "fu_1", status: "CANCELED" } });
     const res = await request(app).post("/api/followups/fu_1/cancel");
     expect(res.status).toBe(200);
     expect(res.body.followUp.status).toBe("CANCELED");
     expect(cancelFollowUp).toHaveBeenCalledWith("fu_1");
+  });
+
+  it("POST /api/followups/:id/cancel returns 404 for an unknown follow-up", async () => {
+    cancelFollowUp.mockResolvedValue({ outcome: "not_found" });
+    const res = await request(app).post("/api/followups/missing/cancel");
+    expect(res.status).toBe(404);
+  });
+
+  it("POST /api/followups/:id/cancel returns 409 when the follow-up is no longer cancelable (e.g. already CALLING)", async () => {
+    cancelFollowUp.mockResolvedValue({ outcome: "not_cancelable", followUp: { id: "fu_1", status: "CALLING" } });
+    const res = await request(app).post("/api/followups/fu_1/cancel");
+    expect(res.status).toBe(409);
   });
 });

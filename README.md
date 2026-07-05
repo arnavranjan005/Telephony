@@ -170,6 +170,22 @@ the caller in conversation ("I can only call between 8am and 9pm - does 8:30am t
 rather than silently booking a promise that the dial-time calling-hours gate would later break
 without telling anyone.
 
+**Undoing a mutating tool call mid-conversation**: `cancel_appointment` and `cancel_followup` let
+the agent actually act on the system prompt's "cancel or adjust an earlier action" instruction
+(a caller changing their mind about a booking they just made) instead of that instruction having
+no tool behind it. Neither requires the id up front - if the agent doesn't already have it from an
+earlier tool result in the same conversation, `findCancelableAppointmentId`/`findCancelableFollowUpId`
+(`apps/api/src/appointmentService.ts`, `packages/domain/src/followUpService.ts`) look up the most
+recent cancelable row for the lead, preferring one tied to the current call. Both cancellations are
+a compare-and-swap `updateMany` gated on the row still being in a cancelable status (mirroring the
+`PENDING -> CALLING` dial-claim pattern below), so a cancel racing a concurrent dial-claim, a REST
+cancel, or a repeated tool call can't corrupt either side - exactly one caller wins, repeating a
+cancel on an already-canceled row is a no-op success, and canceling something already in progress
+(`CALLING`) or resolved (`COMPLETED`/`FAILED`) is reported back as not-cancelable rather than forced.
+`cancelAppointmentById` additionally reverts its claim if the Google Calendar delete call fails, so a
+transient Google error can't leave an appointment marked canceled locally while still live on the
+real calendar.
+
 ## Real-time media streaming (barge-in) — opt-in, `apps/api/src/media-stream/`
 
 The call flow above is turn-based: Telnyx transcribes a full utterance, then the AI's whole reply is
