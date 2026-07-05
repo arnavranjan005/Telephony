@@ -79,8 +79,9 @@ jest.mock("../../api/src/ai/providers/googleAgent", () => ({
 
 import request from "supertest";
 import { createApp } from "../../api/src/app";
-import { prisma, CallStatus } from "@telephony/database";
-import { dialQueue } from "@telephony/queue";
+import { prisma, CallStatus, LeadStatus } from "@telephony/database";
+import { dialQueue, followUpJobId } from "@telephony/queue";
+import { nextCallingWindowStart } from "@telephony/domain";
 
 const app = createApp();
 
@@ -259,5 +260,123 @@ describe("AI conversation e2e (real Postgres, mocked Telnyx/Google Calendar SDKs
 
     const messages = await prisma.conversationMessage.findMany({ where: { callId: call.id }, orderBy: { createdAt: "asc" } });
     expect(messages.map((m) => m.toolName)).toEqual([null, "add_to_dnc", "add_to_dnc", null]);
+  });
+
+  it("negotiates a follow-up time outside legal calling hours to a real FollowUp row + enqueued BullMQ job", async () => {
+    // +1 212 -> America/New_York (see areaCodeTimezones.ts). 07:00 UTC in
+    // August is 03:00 EDT - well outside the 8am-9pm legal calling window,
+    // so the first schedule_followup call must be rejected with a
+    // suggestedTime rather than writing anything. nextCallingWindowStart is
+    // the real (unmocked) domain function computing that suggestion, so the
+    // test doesn't hardcode a DST-sensitive offset by hand.
+    const phoneNumber = "+12125556666";
+    const requestedOutOfWindow = new Date("2026-08-02T07:00:00Z");
+    const suggestedTime = nextCallingWindowStart(phoneNumber, requestedOutOfWindow);
+
+    const call = await setUpAnsweredInboundCall("cc-ai-followup-1", phoneNumber);
+    expect(telnyxSpeakCalls).toHaveLength(1);
+
+    scriptedReplies = [
+      {
+        content: null,
+        toolCalls: [
+          {
+            id: "call-1",
+            name: "schedule_followup",
+            args: { scheduledAt: requestedOutOfWindow.toISOString(), reason: "callback about pricing" },
+          },
+        ],
+      },
+      {
+        content: null,
+        toolCalls: [
+          {
+            id: "call-2",
+            name: "schedule_followup",
+            args: { scheduledAt: suggestedTime.toISOString(), reason: "callback about pricing" },
+          },
+        ],
+      },
+      { content: "Great, I'll call you back then. Have a good day!", toolCalls: [] },
+    ];
+
+    await telnyxWebhook("call.transcription", {
+      call_control_id: "cc-ai-followup-1",
+      transcription_data: { transcript: "Can you call me back tomorrow at 3am my time about pricing?", is_final: true },
+    });
+
+    await waitFor(async () => telnyxSpeakCalls.length >= 2, 15000);
+    expect(telnyxSpeakCalls[1].text).toBe("Great, I'll call you back then. Have a good day!");
+
+    const messages = await prisma.conversationMessage.findMany({ where: { callId: call.id }, orderBy: { createdAt: "asc" } });
+    expect(messages.map((m) => [m.role, m.toolName])).toEqual([
+      ["USER", null],
+      ["ASSISTANT", "schedule_followup"],
+      ["TOOL", "schedule_followup"],
+      ["ASSISTANT", "schedule_followup"],
+      ["TOOL", "schedule_followup"],
+      ["ASSISTANT", null],
+    ]);
+
+    const rejectedResult = JSON.parse(messages[2].content);
+    expect(rejectedResult).toEqual({
+      scheduled: false,
+      reason: "Requested time is outside the legal calling window (8am-9pm local to this number)",
+      suggestedTime: suggestedTime.toISOString(),
+    });
+
+    const confirmedResult = JSON.parse(messages[4].content);
+    expect(confirmedResult.scheduled).toBe(true);
+
+    // Exactly one FollowUp row - the rejected first attempt must not have
+    // written anything.
+    const followUps = await prisma.followUp.findMany({ where: { leadId: call.leadId! } });
+    expect(followUps).toHaveLength(1);
+    expect(followUps[0].id).toBe(confirmedResult.followUpId);
+    expect(followUps[0].scheduledAt.toISOString()).toBe(suggestedTime.toISOString());
+
+    const job = await dialQueue.getJob(followUpJobId(followUps[0].id));
+    expect(job).not.toBeUndefined();
+    expect(job?.data).toEqual({ type: "followup", followUpId: followUps[0].id });
+  });
+
+  it("drives a caller utterance through update_lead_status to a real Lead row update", async () => {
+    const call = await setUpAnsweredInboundCall("cc-ai-lead-1", "+15556667777");
+    expect(telnyxSpeakCalls).toHaveLength(1);
+
+    scriptedReplies = [
+      {
+        content: null,
+        toolCalls: [
+          {
+            id: "call-1",
+            name: "update_lead_status",
+            args: { status: "HOT", notes: "Ready to buy now, budget confirmed" },
+          },
+        ],
+      },
+      { content: "Great, I've made a note of that. Anything else?", toolCalls: [] },
+    ];
+
+    await telnyxWebhook("call.transcription", {
+      call_control_id: "cc-ai-lead-1",
+      transcription_data: { transcript: "Yes, I'm very interested and ready to buy right now", is_final: true },
+    });
+
+    await waitFor(async () => telnyxSpeakCalls.length >= 2, 15000);
+    expect(telnyxSpeakCalls[1].text).toBe("Great, I've made a note of that. Anything else?");
+
+    const messages = await prisma.conversationMessage.findMany({ where: { callId: call.id }, orderBy: { createdAt: "asc" } });
+    expect(messages.map((m) => [m.role, m.toolName])).toEqual([
+      ["USER", null],
+      ["ASSISTANT", "update_lead_status"],
+      ["TOOL", "update_lead_status"],
+      ["ASSISTANT", null],
+    ]);
+    expect(JSON.parse(messages[2].content)).toEqual({ updated: true, leadId: call.leadId, status: "HOT" });
+
+    const lead = await prisma.lead.findUniqueOrThrow({ where: { id: call.leadId! } });
+    expect(lead.status).toBe(LeadStatus.HOT);
+    expect(lead.notes).toBe("Ready to buy now, budget confirmed");
   });
 });

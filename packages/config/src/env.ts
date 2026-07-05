@@ -38,6 +38,16 @@ const envSchema = z.object({
   AI_PROVIDER: z.enum(["google"]).default("google"),
   GOOGLE_AI_API_KEY: z.string().optional(),
   GOOGLE_AI_MODEL: z.string().default("gemini-2.0-flash"),
+
+  // Bidirectional media streaming (real-time barge-in) - opt-in, all provider
+  // keys optional since they're only required when MEDIA_STREAM_ENABLED is true.
+  MEDIA_STREAM_ENABLED: z.coerce.boolean().default(false),
+  MEDIA_STREAM_WS_PATH: z.string().default("/media-stream"),
+  MEDIA_STREAM_SAMPLE_RATE: z.coerce.number().default(8000),
+  DEEPGRAM_API_KEY: z.string().optional(),
+  DEEPGRAM_MODEL: z.string().default("nova-2-phonecall"),
+  ELEVENLABS_API_KEY: z.string().optional(),
+  ELEVENLABS_VOICE_ID: z.string().optional(),
 });
 
 function loadEnv() {

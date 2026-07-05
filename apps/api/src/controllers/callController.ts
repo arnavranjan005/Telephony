@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { z } from "zod";
+import { env } from "@telephony/config";
 import { prisma, CallStatus, CallDirection } from "@telephony/database";
 import {
   answerCall,
@@ -8,6 +9,7 @@ import {
   startTranscription,
   placeOutboundCall,
   finalizeDialOutcome,
+  buildStreamUrl,
 } from "@telephony/domain";
 import { verifyTelnyxSignature } from "../telnyx/webhookVerifier";
 import { handleCallerUtterance } from "../callConversationService";
@@ -16,6 +18,7 @@ import { callEventBus } from "../sse/eventBus";
 const outboundCallSchema = z.object({
   toNumber: z.string().min(1),
   leadId: z.string().optional(),
+  streaming: z.boolean().optional(),
 });
 
 export async function createOutboundCall(req: Request, res: Response) {
@@ -24,9 +27,11 @@ export async function createOutboundCall(req: Request, res: Response) {
     return res.status(400).json({ error: parsed.error.flatten() });
   }
 
-  const { toNumber, leadId } = parsed.data;
+  const { toNumber, leadId, streaming } = parsed.data;
 
-  const result = await placeOutboundCall(toNumber, leadId);
+  const result = await placeOutboundCall(toNumber, leadId, {
+    streamingEnabled: streaming && env.MEDIA_STREAM_ENABLED,
+  });
 
   if (result.outcome === "skipped_dnc") {
     return res.status(403).json({ error: "This number is on the Do-Not-Call list" });
@@ -120,8 +125,8 @@ export async function handleTelnyxWebhook(req: Request, res: Response) {
         // Inbound call: create a Call record if one doesn't already exist for this control id.
         // (Outbound calls already have a Call row created before Telnyx is
         // called, so this branch only ever runs for genuine inbound calls.)
-        const existing = await prisma.call.findUnique({ where: { telnyxCallControlId: callControlId } });
-        if (!existing) {
+        let call = await prisma.call.findUnique({ where: { telnyxCallControlId: callControlId } });
+        if (!call) {
           // Auto-link (or create) the Lead for this caller by phone number,
           // so inbound callers are tracked the same way outbound/campaign
           // contacts are, without requiring a lead to already exist.
@@ -135,7 +140,7 @@ export async function handleTelnyxWebhook(req: Request, res: Response) {
             leadId = lead.id;
           }
 
-          await prisma.call.create({
+          call = await prisma.call.create({
             data: {
               telnyxCallControlId: callControlId,
               direction: CallDirection.INBOUND,
@@ -143,11 +148,15 @@ export async function handleTelnyxWebhook(req: Request, res: Response) {
               fromNumber: payload.from ?? "unknown",
               toNumber: payload.to ?? "unknown",
               leadId,
+              streamingEnabled: env.MEDIA_STREAM_ENABLED,
             },
           });
         }
         if (clientStateCallId === undefined) {
-          await answerCall(callControlId);
+          const streaming = call.streamingEnabled
+            ? { streamUrl: buildStreamUrl(call.id), streamTrack: "both_tracks" as const, bidirectionalCodec: "L16" }
+            : undefined;
+          await answerCall(callControlId, streaming);
         }
         break;
       }
@@ -158,6 +167,12 @@ export async function handleTelnyxWebhook(req: Request, res: Response) {
           data: { status: CallStatus.IN_PROGRESS, startedAt: new Date() },
         });
         callEventBus.publish(call.id, "call.answered", { callControlId });
+        if (call.streamingEnabled) {
+          // Streaming calls greet the caller and start transcription from
+          // within CallStreamSession once Telnyx's media-stream "start" frame
+          // confirms the channel is live, not from this webhook.
+          break;
+        }
         await startTranscription(callControlId);
         await speakText(callControlId, "Hi, thanks for calling! How can I help you today?");
         break;

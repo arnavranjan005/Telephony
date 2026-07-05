@@ -122,17 +122,24 @@ export class GoogleAgent implements AIAgent {
   async generateReply(
     messages: AgentMessage[],
     tools: ToolDefinition[],
-    systemPrompt?: string
+    systemPrompt?: string,
+    signal?: AbortSignal
   ): Promise<AgentReply> {
     const { client, Type } = await this.getClient();
     const contents = messagesToContents(messages);
 
+    // NOTE: per @google/genai's own types, abortSignal is a client-only
+    // cancellation - it stops us from waiting on the response, it does not
+    // cancel server-side generation or its billing. Callers that need actual
+    // correctness on cancellation (not just avoiding a wasted wait) must still
+    // gate on their own turn-versioning rather than relying on this alone.
     const response = await client.models.generateContent({
       model: this.model,
       contents,
       config: {
         systemInstruction: systemPrompt,
         tools: tools.length > 0 ? [{ functionDeclarations: toolsToFunctionDeclarations(tools, Type) }] : undefined,
+        abortSignal: signal,
       },
     });
 
