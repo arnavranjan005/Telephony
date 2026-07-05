@@ -1,46 +1,23 @@
-import { prisma, CallDirection, MessageRole } from "@telephony/database";
+import { prisma, CallDirection } from "@telephony/database";
 import { speakText } from "@telephony/domain";
 import { getAIAgent } from "./ai/agentFactory";
 import { runConversationTurn } from "./ai/conversationRunner";
-import { AgentMessage, AgentRole } from "./ai/types";
+import { AgentMessage } from "./ai/types";
 import { buildCalendarTools } from "./ai/tools/calendarTools";
 import { buildLeadTools } from "./ai/tools/leadTools";
 import { buildComplianceTools } from "./ai/tools/complianceTools";
 import { buildFollowUpTools } from "./ai/tools/followUpTools";
 import { callEventBus } from "./sse/eventBus";
+import { ROLE_TO_DB, loadHistory } from "./conversationHistory";
 
-const SYSTEM_PROMPT = `You are a friendly, professional voice sales/support agent speaking on a live phone call.
+export const SYSTEM_PROMPT = `You are a friendly, professional voice sales/support agent speaking on a live phone call.
 Keep responses short and conversational (1-3 sentences), as they will be spoken aloud via text-to-speech.
 Use the available tools to check calendar availability, book appointments, and update lead status when appropriate.
-Never invent appointment times without checking availability first.`;
-
-const ROLE_TO_DB: Record<AgentRole, MessageRole> = {
-  user: MessageRole.USER,
-  assistant: MessageRole.ASSISTANT,
-  system: MessageRole.SYSTEM,
-  tool: MessageRole.TOOL,
-};
-
-const DB_TO_ROLE: Record<MessageRole, AgentRole> = {
-  USER: "user",
-  ASSISTANT: "assistant",
-  SYSTEM: "system",
-  TOOL: "tool",
-};
-
-async function loadHistory(callId: string): Promise<AgentMessage[]> {
-  const rows = await prisma.conversationMessage.findMany({
-    where: { callId },
-    orderBy: { createdAt: "asc" },
-  });
-
-  return rows.map((row) => ({
-    role: DB_TO_ROLE[row.role],
-    content: row.content,
-    toolName: row.toolName ?? undefined,
-    toolArgs: (row.toolArgs as Record<string, unknown> | null) ?? undefined,
-  }));
-}
+Never invent appointment times without checking availability first.
+If the caller changes their mind about something you already acted on (e.g. they ask for a different
+time after you've already booked an appointment), check whether you need to cancel or adjust that
+earlier action using the appropriate tool before completing the new request - don't leave conflicting
+actions in place.`;
 
 async function persistNewMessages(callId: string, before: number, all: AgentMessage[]) {
   const newMessages = all.slice(before);

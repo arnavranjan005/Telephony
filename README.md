@@ -5,13 +5,14 @@
 AI voice calling platform: outbound/inbound calls via Telnyx, appointment
 booking via Google Calendar, a provider-agnostic AI agent with tool calling
 (Google Gemini by default), automated outbound campaigns and callback
-follow-ups, TCPA/DNC compliance, a distributed BullMQ dial worker, Prisma on
-Neon Postgres, a REST API, Server-Sent Events for live call updates, and a
-Next.js admin panel.
+follow-ups, TCPA/DNC compliance, an opt-in real-time media-streaming mode with
+mid-sentence barge-in, a distributed BullMQ dial worker, Prisma on Neon
+Postgres, a REST API, Server-Sent Events for live call updates, and a Next.js
+admin panel.
 
 This is a foundation to build on, not the full feature set described in the
-requirements doc (no analytics dashboard, sentiment logic, or live
-bidirectional audio streaming yet — see "Not yet implemented" below).
+requirements doc (no analytics dashboard or sentiment logic yet — see "Not yet
+implemented" below).
 
 ## Monorepo layout (Nx)
 
@@ -102,7 +103,7 @@ and set that URL in the Telnyx portal.
 
 ## API overview
 
-- `POST /api/calls/outbound` `{ toNumber, leadId? }` — place an outbound call
+- `POST /api/calls/outbound` `{ toNumber, leadId?, streaming? }` — place an outbound call (`streaming: true` opts into real-time media streaming, requires `MEDIA_STREAM_ENABLED`)
 - `GET /api/calls` / `GET /api/calls/:callId` — list/inspect calls (includes conversation history)
 - `GET /api/calls/:callId/events` — SSE stream of call status + AI conversation turns
 - `POST /api/calls/webhook` — Telnyx webhook receiver (call.initiated/answered/transcription/hangup)
@@ -168,6 +169,64 @@ nothing and returns a suggested in-window time instead, so the agent can negotia
 the caller in conversation ("I can only call between 8am and 9pm - does 8:30am tomorrow work?")
 rather than silently booking a promise that the dial-time calling-hours gate would later break
 without telling anyone.
+
+## Real-time media streaming (barge-in) — opt-in, `apps/api/src/media-stream/`
+
+The call flow above is turn-based: Telnyx transcribes a full utterance, then the AI's whole reply is
+sent to `calls.speak` — there's no way to know a caller started talking again while the AI is still
+speaking, so it can't stop mid-sentence. Setting `MEDIA_STREAM_ENABLED=true` opts a call into an
+alternate path built on Telnyx's bidirectional Media Streaming API (raw audio over a WebSocket
+instead of transcribe-then-speak webhooks) that supports genuine mid-sentence interruption. The
+webhook-based flow above is completely unaffected — this is a parallel path, not a replacement.
+
+- **Enabling it**: `MEDIA_STREAM_ENABLED=true` turns it on globally for inbound calls; the manual
+  `POST /api/calls/outbound` endpoint also accepts `{ "streaming": true }` per-call (still requires
+  the global flag - a per-request flag alone can't enable a feature that's off globally). Campaign/
+  follow-up automated dialing does not use streaming mode in this iteration.
+- **`apps/api/src/media-stream/mediaStreamServer.ts`** — a `ws` WebSocket server attached to the
+  existing Express `http.Server` (not a separate app/process - it needs the same Prisma client, tool
+  builders, and AI agent config `apps/api` already loads). Telnyx connects here once per streaming
+  call; the connection is gated by a short-lived, single-use token embedded in the `stream_url` query
+  string (`packages/domain/src/mediaStream/streamAuth.ts`), since this is the first genuinely public,
+  unauthenticated-by-default inbound endpoint in the app.
+- **`callStreamSession.ts`** owns a small state machine per call: `IDLE → LISTENING → THINKING →
+  SPEAKING`, with barge-in able to interrupt `THINKING`/`SPEAKING` back to `LISTENING` at any point.
+  Caller audio is forwarded to Deepgram's streaming STT (`deepgramClient.ts`); Deepgram's `is_final`
+  segments accumulate into the current utterance, `speech_final`/`UtteranceEnd` signals the caller is
+  done talking (the real turn-end trigger — a long utterance can span several `is_final` segments
+  without actually being finished), and *any* transcript activity while `THINKING`/`SPEAKING` is
+  treated as a barge-in.
+- **Barge-in mechanics**: a monotonic `turnVersion` counter is the authoritative "is this stale"
+  check everywhere (not an `AbortSignal` - per `@google/genai`'s own docs, aborting a Gemini call
+  doesn't stop server-side generation or billing, only wasted local waiting). On barge-in: bump
+  `turnVersion`, send Telnyx `{"event":"clear"}` **before** touching local TTS state (stale audio is
+  already buffered on Telnyx's side regardless of what happens locally), then return to `LISTENING`.
+- **What never gets rolled back**: a tool call (`book_appointment`, `add_to_dnc`, etc.) that's already
+  mid-execution when a barge-in lands is never aborted - it always runs to completion and its result
+  is always persisted (flagged `ConversationMessage.interrupted: true` if the turn was abandoned
+  before producing a spoken reply). These handlers wrap non-idempotent external calls (a Calendar API
+  insert, a DB write) with no partial-cancel semantics; forcibly abandoning one mid-flight would let a
+  real side effect happen while the app never records it. Correcting an already-completed action the
+  caller changed their mind about (e.g. "actually, make it 3pm instead") is handled the same way a
+  human assistant would - the system prompt instructs the agent to check for and cancel/adjust a
+  prior action on the next turn, not by any cancellation plumbing.
+- **`toolLock` serializes tool execution per call** (`streamingConversationRunner.ts`'s
+  `runExclusive`, gated inside `callStreamSession.ts`): guarantees at most one tool handler runs at a
+  time, so an old superseded turn's tool call can never race a new turn's tool call. Without this, two
+  competing tool calls (e.g. two `book_appointment`s) could both succeed and conflict, and - since the
+  LLM has no innate sense of timing, only message order - a late-arriving result could be read as more
+  recent than it actually was. The lock only gates the tool-handler invocation itself; barge-in, STT,
+  and the next turn's own LLM call are unaffected and stay instant.
+- **TTS (MVP)**: one-shot synthesis via ElevenLabs' REST endpoint (`ttsSender.ts`), paced out over the
+  WebSocket in ~20ms frames rather than dumped all at once. Streaming TTS (audio starting before the
+  full reply is synthesized) is a natural Phase 2 - the module's external contract (`sendSpeech(text,
+  sendFrame)` returning a cancelable handle) is designed not to need to change for that swap.
+- **Persistence changes shape**: unlike the webhook path's single end-of-turn batch write, a
+  streaming turn persists incrementally (the user utterance the instant it's finalized, each
+  tool-call/tool-result message as it actually happens, the final reply only if not superseded) -
+  there's no single "end of turn" instant to batch at once a turn can be abandoned mid-way.
+- **New env vars**: `MEDIA_STREAM_ENABLED`, `MEDIA_STREAM_WS_PATH`, `MEDIA_STREAM_SAMPLE_RATE`,
+  `DEEPGRAM_API_KEY`, `DEEPGRAM_MODEL`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` (see `.env.example`).
 
 ## Automated dialing (campaigns & follow-ups) — distributed via BullMQ
 
@@ -287,11 +346,17 @@ fine at this scale, but worth a TTL sweep if this sees real traffic.
 
 The full requirements doc describes a much larger system. This intentionally leaves out: the rest of
 the admin panel UI beyond the one proof-of-wiring page, sentiment analysis (detecting caller sentiment
-mid-call to trigger retention logic), an analytics dashboard (call/campaign/conversion metrics), and
-live bidirectional audio streaming (current inbound/outbound conversation flow uses Telnyx's
-transcription + TTS webhooks rather than raw media streaming, and voice is whatever Telnyx's TTS
-provides — no custom paralinguistic fillers/pacing). These fit into the same architecture — new
-routes/services/tools/pages — and are natural next increments.
+mid-call to trigger retention logic), and an analytics dashboard (call/campaign/conversion metrics).
+These fit into the same architecture — new routes/services/tools/pages — and are natural next
+increments.
+
+Real-time bidirectional media streaming with barge-in is now implemented (see the section above) but
+only as an opt-in MVP, not the default: it's a one-shot (non-streaming) TTS synthesis rather than
+true streaming TTS (so time-to-first-audio isn't as low as it could be), one global inbound flag
+rather than per-DID/per-campaign opt-in, and no custom paralinguistic fillers/pacing — voice quality
+is whatever ElevenLabs' plain REST endpoint returns. Phase 2 (streaming TTS + streaming/incremental
+LLM output) and Phase 3 (multi-vendor STT/TTS abstraction) are natural next increments on the same
+foundation.
 
 TCPA compliance is partial (see the section above for what's covered - consent tracking and calling
 hours). Still missing: National DNC Registry scrubbing (the FCC's registry, distinct from this app's

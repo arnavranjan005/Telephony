@@ -47,6 +47,11 @@ jest.mock("./consentService", () => ({
   hasConsent: (...args: unknown[]) => hasConsent(...args),
 }));
 
+const buildStreamUrl = jest.fn();
+jest.mock("./mediaStream/streamAuth", () => ({
+  buildStreamUrl: (...args: unknown[]) => buildStreamUrl(...args),
+}));
+
 import { finalizeDialOutcome, placeOutboundCall } from "./outboundDialService";
 
 describe("placeOutboundCall", () => {
@@ -74,6 +79,32 @@ describe("placeOutboundCall", () => {
       data: { telnyxCallControlId: "ctrl_1", status: "INITIATED" },
     });
     expect(hasConsent).not.toHaveBeenCalled(); // requireConsent wasn't requested
+    expect(callCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ streamingEnabled: false }) })
+    );
+    expect(buildStreamUrl).not.toHaveBeenCalled();
+    expect(initiateOutboundCall).toHaveBeenCalledWith("+15551234567", { callId: "call_1" }, undefined);
+  });
+
+  it("opts the call into media streaming when streamingEnabled is requested", async () => {
+    isNumberOnDnc.mockResolvedValue(false);
+    callCreate.mockResolvedValue({ id: "call_1" });
+    buildStreamUrl.mockReturnValue("wss://example.com/media-stream?callId=call_1&token=abc");
+    initiateOutboundCall.mockResolvedValue({ call_control_id: "ctrl_1" });
+    callUpdate.mockResolvedValue({ id: "call_1" });
+
+    const result = await placeOutboundCall("+15551234567", "lead_1", { streamingEnabled: true });
+
+    expect(result).toEqual({ outcome: "dialed", callId: "call_1" });
+    expect(callCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ streamingEnabled: true }) })
+    );
+    expect(buildStreamUrl).toHaveBeenCalledWith("call_1");
+    expect(initiateOutboundCall).toHaveBeenCalledWith(
+      "+15551234567",
+      { callId: "call_1" },
+      { streamUrl: "wss://example.com/media-stream?callId=call_1&token=abc", streamTrack: "both_tracks", bidirectionalCodec: "L16" }
+    );
   });
 
   it("skips dialing (no Call row) when consent is required but not on file", async () => {

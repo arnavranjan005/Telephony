@@ -2,6 +2,7 @@ import { CallDirection, CallStatus, CampaignContactStatus, FollowUpStatus, prism
 import { initiateOutboundCall } from "./telnyx/callService";
 import { isNumberOnDnc } from "./dncService";
 import { hasConsent } from "./consentService";
+import { buildStreamUrl } from "./mediaStream/streamAuth";
 
 export type DialResult =
   | { outcome: "dialed"; callId: string }
@@ -17,6 +18,9 @@ export interface PlaceOutboundCallOptions {
    * the manual single-call endpoint, which a human explicitly triggers.
    */
   requireConsent?: boolean;
+  /** Opts this call into real-time bidirectional media streaming (barge-in
+   * capable). Only meaningful when MEDIA_STREAM_ENABLED is on. */
+  streamingEnabled?: boolean;
 }
 
 /**
@@ -46,11 +50,15 @@ export async function placeOutboundCall(
       fromNumber: process.env.TELNYX_FROM_NUMBER ?? "",
       toNumber,
       leadId,
+      streamingEnabled: Boolean(options?.streamingEnabled),
     },
   });
 
   try {
-    const telnyxCall = await initiateOutboundCall(toNumber, { callId: call.id });
+    const streaming = options?.streamingEnabled
+      ? { streamUrl: buildStreamUrl(call.id), streamTrack: "both_tracks" as const, bidirectionalCodec: "L16" }
+      : undefined;
+    const telnyxCall = await initiateOutboundCall(toNumber, { callId: call.id }, streaming);
     if (!telnyxCall.call_control_id) {
       throw new Error("Telnyx did not return a call_control_id");
     }

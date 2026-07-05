@@ -51,6 +51,7 @@ export interface AIAgent {
   generateReply(
     messages: AgentMessage[],
     tools: ToolDefinition[],
-    systemPrompt?: string
+    systemPrompt?: string,
+    signal?: AbortSignal
   ): Promise<AgentReply>;
 }

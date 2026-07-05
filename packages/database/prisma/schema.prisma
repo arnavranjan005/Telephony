@@ -119,6 +119,7 @@ model Call {
   durationSeconds   Int?
   outcome           String?
   recordingUrl      String?
+  streamingEnabled  Boolean       @default(false)
 
   leadId   String?
   lead     Lead?   @relation(fields: [leadId], references: [id])
@@ -165,6 +166,10 @@ model ConversationMessage {
   content   String
   toolName  String?
   toolArgs  Json?
+  // Marks a message whose turn was abandoned mid-flight due to a caller
+  // barge-in (streaming call mode only) - the tool call itself still ran to
+  // completion and its result is real, but no reply was ever spoken for it.
+  interrupted Boolean   @default(false)
   createdAt DateTime    @default(now())
 
   @@index([callId])

@@ -67,7 +67,18 @@ describe("Call routes", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.call.telnyxCallControlId).toBe("ctrl_123");
-    expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", undefined);
+    expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", undefined, { streamingEnabled: undefined });
+  });
+
+  it("does not enable streaming when requested but MEDIA_STREAM_ENABLED is globally off", async () => {
+    placeOutboundCall.mockResolvedValue({ outcome: "dialed", callId: "call_1" });
+    callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallControlId: "ctrl_123", status: "INITIATED" });
+
+    await request(app).post("/api/calls/outbound").send({ toNumber: "+15551234567", streaming: true });
+
+    // MEDIA_STREAM_ENABLED defaults to false in this test env (see setupEnv.ts) -
+    // a per-request "streaming: true" alone can't turn on a feature that's off globally.
+    expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", undefined, { streamingEnabled: false });
   });
 
   it("POST /api/calls/outbound rejects a request missing toNumber", async () => {
@@ -136,6 +147,26 @@ describe("Call routes", () => {
     expect(finalizeDialOutcome).toHaveBeenCalledWith("call_1", "COMPLETED");
   });
 
+  describe("call.answered", () => {
+    it("greets the caller and starts transcription for a non-streaming call", async () => {
+      callUpdate.mockResolvedValue({ id: "call_1", streamingEnabled: false });
+
+      await sendWebhook("call.answered", { call_control_id: "ctrl_1" });
+
+      expect(startTranscription).toHaveBeenCalledWith("ctrl_1");
+      expect(speakText).toHaveBeenCalledWith("ctrl_1", expect.any(String));
+    });
+
+    it("skips the legacy greeting/transcription for a streaming-enabled call (CallStreamSession handles it instead)", async () => {
+      callUpdate.mockResolvedValue({ id: "call_1", streamingEnabled: true });
+
+      await sendWebhook("call.answered", { call_control_id: "ctrl_1" });
+
+      expect(startTranscription).not.toHaveBeenCalled();
+      expect(speakText).not.toHaveBeenCalled();
+    });
+  });
+
   describe("call.initiated (inbound)", () => {
     it("upserts a Lead by caller phone number and links it to the new Call", async () => {
       callFindUnique.mockResolvedValue(null); // no pre-existing Call -> genuine inbound
@@ -152,7 +183,7 @@ describe("Call routes", () => {
       expect(callCreate).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ leadId: "lead_1" }) })
       );
-      expect(answerCall).toHaveBeenCalledWith("ctrl_1");
+      expect(answerCall).toHaveBeenCalledWith("ctrl_1", undefined);
     });
 
     it("skips lead linking when the caller's number is missing from the payload", async () => {

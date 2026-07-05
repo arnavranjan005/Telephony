@@ -30,6 +30,8 @@ export {
   nextCallingWindowStart,
 } from "./compliance/callingHours";
 
+export { buildStreamUrl, issueStreamToken, verifyStreamToken } from "./mediaStream/streamAuth";
+
 export { telnyxClient } from "./telnyx/telnyxClient";
 export {
   initiateOutboundCall,
@@ -39,3 +41,4 @@ export {
   hangupCall,
   decodeClientState,
 } from "./telnyx/callService";
+export type { StreamingOptions } from "./telnyx/callService";

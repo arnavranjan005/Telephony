@@ -1,12 +1,34 @@
 import { env } from "@telephony/config";
 import { telnyxClient } from "./telnyxClient";
 
-export async function initiateOutboundCall(toNumber: string, clientState?: Record<string, unknown>) {
+/** Opts a call into Telnyx's bidirectional Media Streaming (real-time barge-in mode). */
+export interface StreamingOptions {
+  streamUrl: string;
+  streamTrack?: "inbound_track" | "outbound_track" | "both_tracks";
+  bidirectionalCodec?: string;
+}
+
+function streamingParams(streaming?: StreamingOptions): Record<string, unknown> {
+  if (!streaming) return {};
+  return {
+    stream_url: streaming.streamUrl,
+    stream_track: streaming.streamTrack ?? "both_tracks",
+    stream_bidirectional_mode: "rtp",
+    stream_bidirectional_codec: streaming.bidirectionalCodec ?? "L16",
+  };
+}
+
+export async function initiateOutboundCall(
+  toNumber: string,
+  clientState?: Record<string, unknown>,
+  streaming?: StreamingOptions
+) {
   const response = await telnyxClient.calls.create({
     connection_id: env.TELNYX_CONNECTION_ID,
     to: toNumber,
     from: env.TELNYX_FROM_NUMBER,
     client_state: clientState ? Buffer.from(JSON.stringify(clientState)).toString("base64") : undefined,
+    ...streamingParams(streaming),
   } as never);
 
   if (!response.data) {
@@ -16,8 +38,8 @@ export async function initiateOutboundCall(toNumber: string, clientState?: Recor
   return response.data;
 }
 
-export async function answerCall(callControlId: string) {
-  await telnyxClient.calls.answer(callControlId, {} as never);
+export async function answerCall(callControlId: string, streaming?: StreamingOptions) {
+  await telnyxClient.calls.answer(callControlId, { ...streamingParams(streaming) } as never);
 }
 
 export async function speakText(callControlId: string, text: string) {
