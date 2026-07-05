@@ -59,7 +59,11 @@ export class CallStreamSession {
       ...buildCalendarTools({ leadId: call?.leadId ?? undefined, callId: this.options.callId }),
       ...buildLeadTools({ leadId: call?.leadId ?? undefined }),
       ...buildComplianceTools({ phoneNumber: callerPhoneNumber }),
-      ...buildFollowUpTools({ leadId: call?.leadId ?? undefined, phoneNumber: callerPhoneNumber }),
+      ...buildFollowUpTools({
+        leadId: call?.leadId ?? undefined,
+        phoneNumber: callerPhoneNumber,
+        streamingEnabled: call?.streamingEnabled,
+      }),
     ];
     const campaignScript = call?.campaignContact?.campaign.script;
     this.systemPrompt = campaignScript ? `${SYSTEM_PROMPT}\n\nCampaign script/guidance:\n${campaignScript}` : SYSTEM_PROMPT;

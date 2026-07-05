@@ -4,6 +4,12 @@ import { createFollowUp, isWithinCallingHours, nextCallingWindowStart } from "@t
 export interface FollowUpToolContext {
   leadId?: string;
   phoneNumber?: string;
+  /** Whether the *current* call is a streaming (barge-in capable) call -
+   * inherited onto the scheduled callback so a follow-up promised mid a
+   * streaming conversation is itself dialed in streaming mode later, without
+   * requiring the caller (or the agent) to make an explicit choice. Still
+   * gated by the global MEDIA_STREAM_ENABLED flag at actual dial time. */
+  streamingEnabled?: boolean;
 }
 
 /**
@@ -53,6 +59,7 @@ export function buildFollowUpTools(context: FollowUpToolContext): ToolDefinition
         leadId: context.leadId,
         scheduledAt,
         reason: args.reason as string | undefined,
+        streamingEnabled: context.streamingEnabled,
       });
 
       return { scheduled: true, followUpId: followUp.id, scheduledAt: followUp.scheduledAt };

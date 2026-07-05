@@ -1,5 +1,6 @@
 import { FollowUpStatus, prisma } from "@telephony/database";
 import { enqueueFollowUpDial, enqueueFollowUpDialAt } from "@telephony/queue";
+import { env } from "@telephony/config";
 import { placeOutboundCall } from "./outboundDialService";
 import { isWithinCallingHours, nextCallingWindowStart } from "./compliance/callingHours";
 
@@ -8,6 +9,10 @@ export interface CreateFollowUpInput {
   scheduledAt: Date;
   reason?: string;
   callId?: string;
+  /** Opts this callback dial into real-time media streaming (barge-in) - see
+   * outboundDialService.ts's PlaceOutboundCallOptions. Still gated by the
+   * global MEDIA_STREAM_ENABLED flag at dial time. */
+  streamingEnabled?: boolean;
 }
 
 export async function createFollowUp(input: CreateFollowUpInput) {
@@ -53,7 +58,10 @@ export async function processFollowUpJob(followUpId: string): Promise<void> {
     return;
   }
 
-  const result = await placeOutboundCall(followUp.lead.phoneNumber, followUp.leadId, { requireConsent: true });
+  const result = await placeOutboundCall(followUp.lead.phoneNumber, followUp.leadId, {
+    requireConsent: true,
+    streamingEnabled: Boolean(followUp.streamingEnabled) && env.MEDIA_STREAM_ENABLED,
+  });
 
   if (result.outcome === "skipped_dnc") {
     await prisma.followUp.update({ where: { id: followUpId }, data: { status: FollowUpStatus.SKIPPED_DNC } });

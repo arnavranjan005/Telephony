@@ -176,13 +176,14 @@ model ConversationMessage {
 }
 
 model Campaign {
-  id         String         @id @default(cuid())
-  name       String
-  script     String?
-  status     CampaignStatus @default(DRAFT)
-  fromNumber String?
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
+  id               String         @id @default(cuid())
+  name             String
+  script           String?
+  status           CampaignStatus @default(DRAFT)
+  fromNumber       String?
+  streamingEnabled Boolean        @default(false)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 
   contacts CampaignContact[]
 
@@ -205,15 +206,16 @@ model CampaignContact {
 }
 
 model FollowUp {
-  id          String         @id @default(cuid())
-  leadId      String
-  lead        Lead           @relation(fields: [leadId], references: [id])
-  callId      String?
-  originCall  Call?          @relation(fields: [callId], references: [id])
-  reason      String?
-  scheduledAt DateTime
-  status      FollowUpStatus @default(PENDING)
-  createdAt   DateTime       @default(now())
+  id               String         @id @default(cuid())
+  leadId           String
+  lead             Lead           @relation(fields: [leadId], references: [id])
+  callId           String?
+  originCall       Call?          @relation(fields: [callId], references: [id])
+  reason           String?
+  scheduledAt      DateTime
+  status           FollowUpStatus @default(PENDING)
+  streamingEnabled Boolean        @default(false)
+  createdAt        DateTime       @default(now())
 
   @@index([status, scheduledAt])
 }

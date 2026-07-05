@@ -7,6 +7,7 @@ const createFollowUpSchema = z.object({
   leadId: z.string().min(1),
   scheduledAt: z.string(),
   reason: z.string().optional(),
+  streamingEnabled: z.boolean().optional(),
 });
 
 export async function postFollowUp(req: Request, res: Response) {
@@ -17,6 +18,7 @@ export async function postFollowUp(req: Request, res: Response) {
     leadId: parsed.data.leadId,
     scheduledAt: new Date(parsed.data.scheduledAt),
     reason: parsed.data.reason,
+    streamingEnabled: parsed.data.streamingEnabled,
   });
 
   res.status(201).json({ followUp });
