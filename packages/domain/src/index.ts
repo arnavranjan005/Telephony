@@ -22,6 +22,9 @@ export type { CampaignContactInput, CreateCampaignInput } from "./campaignServic
 
 export { isNumberOnDnc, addToDnc, removeFromDnc, listDnc } from "./dncService";
 
+export { getOverviewStats, getCampaignPerformance, getCallTimeseries } from "./analyticsService";
+export type { OverviewStats, CampaignPerformance, CallTimeseriesPoint } from "./analyticsService";
+
 export { recordConsent, revokeConsent, hasConsent } from "./consentService";
 
 export {

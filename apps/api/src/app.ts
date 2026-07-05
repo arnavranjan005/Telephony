@@ -13,6 +13,8 @@ import calendarRoutes from "./routes/calendarRoutes";
 import campaignRoutes from "./routes/campaignRoutes";
 import followUpRoutes from "./routes/followUpRoutes";
 import dncRoutes from "./routes/dncRoutes";
+import analyticsRoutes from "./routes/analyticsRoutes";
+import eventRoutes from "./routes/eventRoutes";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 
 export function createApp() {
@@ -43,6 +45,8 @@ export function createApp() {
   app.use("/api/campaigns", campaignRoutes);
   app.use("/api/followups", followUpRoutes);
   app.use("/api/dnc", dncRoutes);
+  app.use("/api/analytics", analyticsRoutes);
+  app.use("/api/events", eventRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

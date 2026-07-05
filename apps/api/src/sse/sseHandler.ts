@@ -32,3 +32,33 @@ export function streamCallEvents(req: Request, res: Response): void {
     res.end();
   });
 }
+
+/**
+ * Dashboard-wide feed: every event published anywhere (call lifecycle,
+ * lead/campaign/appointment/follow-up changes), not scoped to one call.
+ * Powers the admin panel's live activity feed and stat refreshes.
+ */
+export function streamAllEvents(req: Request, res: Response): void {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.flushHeaders();
+
+  res.write(`event: connected\ndata: ${JSON.stringify({})}\n\n`);
+
+  const listener = (event: CallEvent) => writeSseEvent(res, event);
+  callEventBus.on("*", listener);
+
+  const heartbeat = setInterval(() => {
+    res.write(": heartbeat\n\n");
+  }, 25_000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    callEventBus.off("*", listener);
+    res.end();
+  });
+}

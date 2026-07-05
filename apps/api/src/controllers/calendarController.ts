@@ -8,6 +8,7 @@ import {
   isSlotAvailable,
 } from "../google-calendar/calendarService";
 import { prisma } from "@telephony/database";
+import { callEventBus } from "../sse/eventBus";
 
 export function getGoogleAuthUrl(_req: Request, res: Response) {
   res.json({ url: getAuthUrl() });
@@ -81,6 +82,7 @@ export async function bookAppointment(req: Request, res: Response) {
       },
     });
 
+    callEventBus.publishGlobal("appointment.created", { appointment });
     res.status(201).json({ appointment, calendarEvent: event });
   } catch (error) {
     // The Google event already exists at this point - without this, a DB

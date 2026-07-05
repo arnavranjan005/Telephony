@@ -1,4 +1,6 @@
 import { z } from "zod";
+import type { Call } from "./call";
+import type { Appointment } from "./appointment";
 
 export const LeadStatusValues = ["COLD", "WARM", "HOT"] as const;
 export type LeadStatus = (typeof LeadStatusValues)[number];
@@ -19,6 +21,11 @@ export interface Lead {
   consentedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface LeadWithDetails extends Lead {
+  calls: Call[];
+  appointments: Appointment[];
 }
 
 export const createLeadSchema = z.object({

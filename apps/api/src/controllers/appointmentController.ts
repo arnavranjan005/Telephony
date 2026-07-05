@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { prisma, AppointmentStatus } from "@telephony/database";
 import { cancelAppointmentById } from "../appointmentService";
+import { callEventBus } from "../sse/eventBus";
 
 export async function listAppointments(req: Request, res: Response) {
   const status = req.query.status as AppointmentStatus | undefined;
@@ -27,5 +28,6 @@ export async function cancelAppointment(req: Request, res: Response) {
   if (result.outcome === "not_cancelable") {
     return res.status(409).json({ error: "Appointment can no longer be canceled", appointment: result.appointment });
   }
+  callEventBus.publishGlobal("appointment.canceled", { appointment: result.appointment });
   res.json({ appointment: result.appointment });
 }

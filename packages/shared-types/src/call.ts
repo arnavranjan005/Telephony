@@ -1,3 +1,6 @@
+import type { ConversationMessage } from "./conversationMessage";
+import type { Appointment } from "./appointment";
+
 export type CallDirection = "INBOUND" | "OUTBOUND";
 
 export type CallStatus =
@@ -26,4 +29,9 @@ export interface Call {
   leadId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CallWithDetails extends Call {
+  messages: ConversationMessage[];
+  appointments: Appointment[];
 }

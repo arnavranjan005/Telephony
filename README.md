@@ -11,8 +11,7 @@ worker, Prisma on Neon Postgres, a REST API, Server-Sent Events for live call
 updates, and a Next.js admin panel.
 
 This is a foundation to build on, not the full feature set described in the
-requirements doc (no analytics dashboard or sentiment logic yet — see "Not yet
-implemented" below).
+requirements doc (no sentiment logic yet — see "Not yet implemented" below).
 
 ## Monorepo layout (Nx)
 
@@ -120,12 +119,21 @@ and set that URL in the Telnyx portal.
 - `POST /api/followups` `{ leadId, scheduledAt, reason? }` — schedule a callback; the dial worker dials it automatically once due
 - `GET /api/followups`, `POST /api/followups/:id/cancel`
 - `GET /api/dnc`, `POST /api/dnc` `{ phoneNumber, reason? }`, `DELETE /api/dnc/:phoneNumber` — global Do-Not-Call list; every outbound dial (manual, campaign, or follow-up) is checked against it first
+- `GET /api/analytics/overview` — lead/call/appointment/campaign/follow-up/DNC counts + the call-to-appointment rate
+- `GET /api/analytics/campaigns` — per-campaign contact-status breakdown + appointments booked
+- `GET /api/analytics/timeseries?days=14` — daily call-outcome counts for charting
+- `GET /api/events/stream` — dashboard-wide SSE feed: every call/lead/campaign/appointment/follow-up/DNC lifecycle event, not scoped to one call
 
 ### Consuming the SSE stream
 
 ```js
-const source = new EventSource(`/api/calls/${callId}/events`);
-source.addEventListener("conversation.message", (e) => console.log(JSON.parse(e.data)));
+// Per-call: status + AI conversation turns for one call
+const callEvents = new EventSource(`/api/calls/${callId}/events`);
+callEvents.addEventListener("conversation.message", (e) => console.log(JSON.parse(e.data)));
+
+// Dashboard-wide: every event across every call/lead/campaign/appointment/follow-up/DNC change
+const dashboardEvents = new EventSource(`/api/events/stream`);
+dashboardEvents.addEventListener("lead.updated", (e) => console.log(JSON.parse(e.data)));
 ```
 
 ## Admin panel (`apps/web`)
@@ -139,11 +147,44 @@ browser via `apps/web/src/lib/apiClient.ts`, which calls `apps/api` at
 static `apps/web/out/` directory you can serve from any static host/CDN —
 it never needs a Node process of its own in production.
 
-Currently ships with one page (a leads list) as a proof that the wiring
-works end-to-end, typed against `@telephony/shared-types`. The rest of the
-admin UI (call logs, campaign management, appointment calendar, live call
-monitoring over the SSE stream) is intentionally not built yet — this was
-scoped as "get the skeleton right first."
+Built with shadcn/ui + Tailwind v4 (`npx shadcn@latest add ...`), typed
+against `@telephony/shared-types` throughout. Pages: a live-updating
+**Dashboard** (stat cards, a 14-day call-volume chart, a campaign-performance
+table, and a live activity feed), **Calls** (log + transcript detail),
+**Leads** (list + status/consent/notes editing), **Campaigns** (create, list,
+start/pause, per-campaign contact/performance detail), **Appointments**,
+**Follow-ups**, and the **Do-Not-Call** list — each with cancel/create actions
+wired straight to the REST API.
+
+Live updates come from a dashboard-wide SSE feed (`GET /api/events/stream`,
+`apps/api/src/sse/sseHandler.ts`'s `streamAllEvents`, consumed via
+`apps/web/src/hooks/useEventStream.ts`) that broadcasts every call/lead/
+campaign/appointment/follow-up/DNC lifecycle event over the same `EventEmitter`
+bus the per-call stream uses — the dashboard's stat cards, tables, and
+activity feed all refetch/update as events arrive, with no polling.
+
+Analytics themselves are computed server-side in
+`packages/domain/src/analyticsService.ts` (`getOverviewStats`,
+`getCampaignPerformance`, `getCallTimeseries`) and exposed at
+`/api/analytics/{overview,campaigns,timeseries}`.
+
+Not yet built: live call monitoring (watching an in-progress call's transcript
+stream from the dashboard) and a Google Calendar view for appointments (the
+appointments page is a flat list, not a calendar widget).
+
+### Build gotcha: don't let `NODE_ENV` leak into `next build`
+
+`apps/web`'s `build` script pins `NODE_ENV=production` explicitly
+(`apps/web/project.json`'s Nx target also sets it) because Nx's
+`nx:run-commands` executor otherwise propagates whatever `NODE_ENV` happens to
+be set in the invoking shell into the `next build` child process. If that's
+`development` (or anything other than `production`/unset), `next build` mixes
+its dev and prod runtime chunks during static-page generation and every route
+fails to prerender with `TypeError: Cannot read properties of null (reading
+'useContext')`. Building via `npx next build` directly is unaffected since Next
+defaults `NODE_ENV` itself when it isn't already set — the bug only shows up
+through an orchestrator (Nx, and potentially others) that forwards an existing
+`NODE_ENV` value into the build.
 
 ## How a live call flows
 
@@ -368,11 +409,11 @@ fine at this scale, but worth a TTL sweep if this sees real traffic.
 
 ## Not yet implemented
 
-The full requirements doc describes a much larger system. This intentionally leaves out: the rest of
-the admin panel UI beyond the one proof-of-wiring page, sentiment analysis (detecting caller sentiment
-mid-call to trigger retention logic), and an analytics dashboard (call/campaign/conversion metrics).
-These fit into the same architecture — new routes/services/tools/pages — and are natural next
-increments.
+The full requirements doc describes a much larger system. This intentionally leaves out: sentiment
+analysis (detecting caller sentiment mid-call to trigger retention logic), live call monitoring
+(watching an in-progress call's transcript from the dashboard), and a Google Calendar view for
+appointments (currently a flat list). These fit into the same architecture — new routes/services/tools/
+pages — and are natural next increments.
 
 Real-time bidirectional media streaming with barge-in is now implemented and is the default calling
 path (see the section above), but it's still an MVP: it's a one-shot (non-streaming) TTS synthesis

@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma, LeadStatus } from "@telephony/database";
 import { recordConsent, revokeConsent } from "@telephony/domain";
+import { callEventBus } from "../sse/eventBus";
 
 const createLeadSchema = z.object({
   firstName: z.string().optional(),
@@ -17,6 +18,7 @@ export async function createLead(req: Request, res: Response) {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const lead = await prisma.lead.create({ data: parsed.data });
+  callEventBus.publishGlobal("lead.created", { lead });
   res.status(201).json({ lead });
 }
 
@@ -48,6 +50,7 @@ export async function updateLead(req: Request, res: Response) {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const lead = await prisma.lead.update({ where: { id: req.params.leadId }, data: parsed.data });
+  callEventBus.publishGlobal("lead.updated", { lead });
   res.json({ lead });
 }
 
@@ -71,6 +74,7 @@ export async function setLeadConsent(req: Request, res: Response) {
     ? await recordConsent(req.params.leadId, parsed.data.source)
     : await revokeConsent(req.params.leadId);
 
+  callEventBus.publishGlobal("lead.updated", { lead });
   res.json({ lead });
 }
 
