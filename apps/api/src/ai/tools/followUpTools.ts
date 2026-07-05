@@ -15,9 +15,10 @@ export interface FollowUpToolContext {
   callId?: string;
   /** Whether the *current* call is a streaming (barge-in capable) call -
    * inherited onto the scheduled callback so a follow-up promised mid a
-   * streaming conversation is itself dialed in streaming mode later, without
-   * requiring the caller (or the agent) to make an explicit choice. Still
-   * gated by the global MEDIA_STREAM_ENABLED flag at actual dial time. */
+   * streaming conversation is itself dialed in streaming mode later (the
+   * default either way), without requiring the caller (or the agent) to make
+   * an explicit choice. Still gated by the global MEDIA_STREAM_ENABLED flag
+   * at actual dial time. */
   streamingEnabled?: boolean;
 }
 

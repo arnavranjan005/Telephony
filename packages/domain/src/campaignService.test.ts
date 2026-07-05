@@ -104,6 +104,28 @@ describe("campaignService", () => {
       });
     });
 
+    it("defaults a new campaign's streamingEnabled to true when not specified", async () => {
+      campaignCreate.mockResolvedValue({ id: "camp_1" });
+      campaignFindUnique.mockResolvedValue({ id: "camp_1", contacts: [] });
+
+      await createCampaign({ name: "Spring outreach", contacts: [] });
+
+      expect(campaignCreate).toHaveBeenCalledWith({
+        data: { name: "Spring outreach", script: undefined, streamingEnabled: true },
+      });
+    });
+
+    it("respects an explicit streamingEnabled: false opt-out on a new campaign", async () => {
+      campaignCreate.mockResolvedValue({ id: "camp_1" });
+      campaignFindUnique.mockResolvedValue({ id: "camp_1", contacts: [] });
+
+      await createCampaign({ name: "Spring outreach", streamingEnabled: false, contacts: [] });
+
+      expect(campaignCreate).toHaveBeenCalledWith({
+        data: { name: "Spring outreach", script: undefined, streamingEnabled: false },
+      });
+    });
+
     it("uses the given leadId directly without upserting a lead", async () => {
       campaignCreate.mockResolvedValue({ id: "camp_1" });
       campaignContactCreate.mockResolvedValue({});

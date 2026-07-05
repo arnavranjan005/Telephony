@@ -119,7 +119,7 @@ model Call {
   durationSeconds   Int?
   outcome           String?
   recordingUrl      String?
-  streamingEnabled  Boolean       @default(false)
+  streamingEnabled  Boolean       @default(true)
 
   leadId   String?
   lead     Lead?   @relation(fields: [leadId], references: [id])
@@ -181,7 +181,7 @@ model Campaign {
   script           String?
   status           CampaignStatus @default(DRAFT)
   fromNumber       String?
-  streamingEnabled Boolean        @default(false)
+  streamingEnabled Boolean        @default(true)
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
@@ -214,7 +214,7 @@ model FollowUp {
   reason           String?
   scheduledAt      DateTime
   status           FollowUpStatus @default(PENDING)
-  streamingEnabled Boolean        @default(false)
+  streamingEnabled Boolean        @default(true)
   createdAt        DateTime       @default(now())
 
   @@index([status, scheduledAt])

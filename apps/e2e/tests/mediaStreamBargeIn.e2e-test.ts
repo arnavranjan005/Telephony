@@ -28,11 +28,11 @@
 //     instead of hitting a live account.
 //
 // @telephony/config is also overridden (spreading the real parsed env so
-// DATABASE_URL/REDIS_URL stay real) to turn MEDIA_STREAM_ENABLED on - it
-// defaults to false, and turning it on globally in the shared setupEnv.ts
-// would break every other e2e spec's inbound-call assertions (they expect
-// the legacy webhook greeting/transcription path). jest.mock is file-scoped,
-// so this override only applies within this file's module registry.
+// DATABASE_URL/REDIS_URL stay real) to turn MEDIA_STREAM_ENABLED on - the
+// shared setupEnv.ts forces it off for the rest of the e2e suite (those specs
+// expect the legacy webhook greeting/transcription path), so this file needs
+// its own override. jest.mock is file-scoped, so this only applies within
+// this file's module registry.
 
 jest.mock("@telephony/config", () => {
   const actual = jest.requireActual("@telephony/config");

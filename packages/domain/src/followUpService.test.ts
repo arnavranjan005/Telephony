@@ -63,16 +63,27 @@ beforeEach(() => {
 
 describe("followUpService", () => {
   describe("createFollowUp", () => {
-    it("persists the given fields and enqueues a delayed dial job", async () => {
+    it("persists the given fields and enqueues a delayed dial job, defaulting streamingEnabled to true", async () => {
       const scheduledAt = new Date("2025-01-16T18:00:00Z");
       followUpCreate.mockResolvedValue({ id: "fu_1", leadId: "lead_1", scheduledAt, reason: "callback" });
 
       await createFollowUp({ leadId: "lead_1", scheduledAt, reason: "callback" });
 
       expect(followUpCreate).toHaveBeenCalledWith({
-        data: { leadId: "lead_1", scheduledAt, reason: "callback" },
+        data: { leadId: "lead_1", scheduledAt, reason: "callback", streamingEnabled: true },
       });
       expect(enqueueFollowUpDial).toHaveBeenCalledWith("fu_1", scheduledAt);
+    });
+
+    it("respects an explicit streamingEnabled: false opt-out", async () => {
+      const scheduledAt = new Date("2025-01-16T18:00:00Z");
+      followUpCreate.mockResolvedValue({ id: "fu_1", leadId: "lead_1", scheduledAt });
+
+      await createFollowUp({ leadId: "lead_1", scheduledAt, streamingEnabled: false });
+
+      expect(followUpCreate).toHaveBeenCalledWith({
+        data: { leadId: "lead_1", scheduledAt, streamingEnabled: false },
+      });
     });
   });
 

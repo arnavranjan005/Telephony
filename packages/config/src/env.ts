@@ -11,6 +11,16 @@ import { z } from "zod";
 // since both are exactly two directories below the root.
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 
+// z.coerce.boolean() coerces via plain `Boolean(value)`, which is `true` for
+// *any* non-empty string - including the literal string "false" - so it
+// can't parse an env var's textual "true"/"false" the way anyone reading a
+// .env file would expect. This parses the string form correctly while still
+// accepting an already-boolean value (e.g. from a test's mocked env object).
+const booleanEnv = z.preprocess((value) => {
+  if (typeof value === "string") return value.toLowerCase() === "true";
+  return value;
+}, z.boolean());
+
 const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
@@ -19,7 +29,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
 
   REDIS_URL: z.string().min(1, "REDIS_URL is required (e.g. an Aiven Redis rediss:// connection string)"),
-  REDIS_TLS_REJECT_UNAUTHORIZED: z.coerce.boolean().default(true),
+  REDIS_TLS_REJECT_UNAUTHORIZED: booleanEnv.default(true),
   DIAL_RATE_LIMIT_MAX: z.coerce.number().default(5),
   DIAL_RATE_LIMIT_DURATION_MS: z.coerce.number().default(1000),
 
@@ -39,9 +49,11 @@ const envSchema = z.object({
   GOOGLE_AI_API_KEY: z.string().optional(),
   GOOGLE_AI_MODEL: z.string().default("gemini-2.0-flash"),
 
-  // Bidirectional media streaming (real-time barge-in) - opt-in, all provider
-  // keys optional since they're only required when MEDIA_STREAM_ENABLED is true.
-  MEDIA_STREAM_ENABLED: z.coerce.boolean().default(false),
+  // Bidirectional media streaming (real-time barge-in) - the default calling
+  // path. Provider keys below are required unless this is explicitly turned
+  // off (MEDIA_STREAM_ENABLED=false) to fall back to the legacy
+  // transcribe-then-speak webhook flow.
+  MEDIA_STREAM_ENABLED: booleanEnv.default(true),
   MEDIA_STREAM_WS_PATH: z.string().default("/media-stream"),
   MEDIA_STREAM_SAMPLE_RATE: z.coerce.number().default(8000),
   DEEPGRAM_API_KEY: z.string().optional(),
@@ -57,6 +69,20 @@ function loadEnv() {
     console.error(parsed.error.flatten().fieldErrors);
     throw new Error("Invalid environment configuration");
   }
+
+  if (parsed.data.MEDIA_STREAM_ENABLED) {
+    const missing = ["DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID"].filter(
+      (key) => !parsed.data[key as keyof typeof parsed.data]
+    );
+    if (missing.length > 0) {
+      console.error(
+        `MEDIA_STREAM_ENABLED is on (the default) but missing: ${missing.join(", ")}. ` +
+          "Set them, or set MEDIA_STREAM_ENABLED=false to use the legacy webhook-based calling flow instead."
+      );
+      throw new Error("Invalid environment configuration");
+    }
+  }
+
   return parsed.data;
 }
 

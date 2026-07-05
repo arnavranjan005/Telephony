@@ -18,6 +18,9 @@ import { callEventBus } from "../sse/eventBus";
 const outboundCallSchema = z.object({
   toNumber: z.string().min(1),
   leadId: z.string().optional(),
+  // Media streaming (barge-in) is on by default for every call - pass
+  // `streaming: false` to opt this call out and use the legacy webhook flow
+  // instead. Still gated by the global MEDIA_STREAM_ENABLED flag either way.
   streaming: z.boolean().optional(),
 });
 
@@ -30,7 +33,7 @@ export async function createOutboundCall(req: Request, res: Response) {
   const { toNumber, leadId, streaming } = parsed.data;
 
   const result = await placeOutboundCall(toNumber, leadId, {
-    streamingEnabled: streaming && env.MEDIA_STREAM_ENABLED,
+    streamingEnabled: (streaming ?? true) && env.MEDIA_STREAM_ENABLED,
   });
 
   if (result.outcome === "skipped_dnc") {

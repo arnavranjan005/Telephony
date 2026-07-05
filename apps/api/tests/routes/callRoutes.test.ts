@@ -67,7 +67,9 @@ describe("Call routes", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.call.telnyxCallControlId).toBe("ctrl_123");
-    expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", undefined, { streamingEnabled: undefined });
+    // Streaming defaults to requested (true) here, but MEDIA_STREAM_ENABLED
+    // defaults to false in this test env (see setupEnv.ts), so it resolves false.
+    expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", undefined, { streamingEnabled: false });
   });
 
   it("does not enable streaming when requested but MEDIA_STREAM_ENABLED is globally off", async () => {
