@@ -9,9 +9,9 @@
 // outboundDialService) run unmocked.
 //
 // @telephony/config is overridden (spreading the real parsed env) to turn
-// MEDIA_STREAM_ENABLED on - it defaults to false, and flipping it on
-// globally in the shared setupEnv.ts would change other e2e specs'
-// inbound-call assertions. jest.mock is file-scoped, so this only applies
+// MEDIA_STREAM_ENABLED on - the shared setupEnv.ts forces it off for the rest
+// of the e2e suite (which drives the legacy webhook path), so this file
+// needs its own override. jest.mock is file-scoped, so this only applies
 // within this file's module registry.
 
 jest.mock("@telephony/config", () => {
@@ -119,14 +119,14 @@ describe("campaign/follow-up streaming opt-in e2e (real Postgres + Redis + worke
     expect(call.streamingEnabled).toBe(true);
   });
 
-  it("dials a campaign contact with no stream_url when the campaign did not opt into streaming", async () => {
+  it("dials a campaign contact with no stream_url when the campaign opted out of streaming", async () => {
     const leadRes = await request(app).post("/api/leads").send({ phoneNumber: "+15558880002" });
     const leadId = leadRes.body.lead.id;
     await prisma.lead.update({ where: { id: leadId }, data: { consentStatus: ConsentStatus.GRANTED } });
 
     const createRes = await request(app)
       .post("/api/campaigns")
-      .send({ name: "non-streaming e2e campaign", contacts: [{ leadId }] });
+      .send({ name: "non-streaming e2e campaign", streamingEnabled: false, contacts: [{ leadId }] });
     const campaignId = createRes.body.campaign.id;
 
     await request(app).post(`/api/campaigns/${campaignId}/start`);

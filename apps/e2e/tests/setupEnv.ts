@@ -13,3 +13,7 @@ process.env.GOOGLE_AI_API_KEY ??= "test_google_ai_key";
 process.env.GOOGLE_CALENDAR_ID ??= "primary";
 process.env.DIAL_RATE_LIMIT_MAX ??= "5";
 process.env.DIAL_RATE_LIMIT_DURATION_MS ??= "1000";
+// Most specs drive the legacy webhook-based call flow; the streaming-specific
+// specs (campaignFollowUpStreaming, mediaStreamBargeIn) override
+// @telephony/config's env export directly to turn this on, file-scoped.
+process.env.MEDIA_STREAM_ENABLED ??= "false";

@@ -9,14 +9,17 @@ export interface CreateFollowUpInput {
   scheduledAt: Date;
   reason?: string;
   callId?: string;
-  /** Opts this callback dial into real-time media streaming (barge-in) - see
-   * outboundDialService.ts's PlaceOutboundCallOptions. Still gated by the
-   * global MEDIA_STREAM_ENABLED flag at dial time. */
+  /** This callback dials with real-time media streaming (barge-in) by
+   * default - see outboundDialService.ts's PlaceOutboundCallOptions. Pass
+   * `false` to opt this callback out. Still gated by the global
+   * MEDIA_STREAM_ENABLED flag at dial time either way. */
   streamingEnabled?: boolean;
 }
 
 export async function createFollowUp(input: CreateFollowUpInput) {
-  const followUp = await prisma.followUp.create({ data: input });
+  const followUp = await prisma.followUp.create({
+    data: { ...input, streamingEnabled: input.streamingEnabled ?? true },
+  });
   await enqueueFollowUpDial(followUp.id, followUp.scheduledAt);
   return followUp;
 }

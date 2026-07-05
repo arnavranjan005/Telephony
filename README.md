@@ -5,10 +5,10 @@
 AI voice calling platform: outbound/inbound calls via Telnyx, appointment
 booking via Google Calendar, a provider-agnostic AI agent with tool calling
 (Google Gemini by default), automated outbound campaigns and callback
-follow-ups, TCPA/DNC compliance, an opt-in real-time media-streaming mode with
-mid-sentence barge-in, a distributed BullMQ dial worker, Prisma on Neon
-Postgres, a REST API, Server-Sent Events for live call updates, and a Next.js
-admin panel.
+follow-ups, TCPA/DNC compliance, real-time bidirectional media streaming with
+mid-sentence barge-in as the default calling path, a distributed BullMQ dial
+worker, Prisma on Neon Postgres, a REST API, Server-Sent Events for live call
+updates, and a Next.js admin panel.
 
 This is a foundation to build on, not the full feature set described in the
 requirements doc (no analytics dashboard or sentiment logic yet — see "Not yet
@@ -83,6 +83,9 @@ results back, repeat until the agent returns a final spoken reply.
    - `TELNYX_PUBLIC_KEY` — for webhook signature verification (optional but recommended)
    - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` — OAuth client for Calendar
    - `GOOGLE_AI_API_KEY` — Gemini API key (https://aistudio.google.com/apikey)
+   - `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` — required because real-time media
+     streaming (barge-in) is the default calling path (`MEDIA_STREAM_ENABLED=true` by default); set
+     `MEDIA_STREAM_ENABLED=false` instead if you'd rather run the legacy webhook-based flow and skip these
 3. `npx nx run database:prisma-generate`
 4. `npx nx run database:prisma-migrate` — creates the schema on your Neon database
 5. `npm run dev:api` — starts the API with hot reload on `PORT` (default 3000)
@@ -103,7 +106,7 @@ and set that URL in the Telnyx portal.
 
 ## API overview
 
-- `POST /api/calls/outbound` `{ toNumber, leadId?, streaming? }` — place an outbound call (`streaming: true` opts into real-time media streaming, requires `MEDIA_STREAM_ENABLED`)
+- `POST /api/calls/outbound` `{ toNumber, leadId?, streaming? }` — place an outbound call; streams (barge-in) by default, pass `streaming: false` to opt out and use the legacy webhook flow instead (either way, gated by the global `MEDIA_STREAM_ENABLED` flag)
 - `GET /api/calls` / `GET /api/calls/:callId` — list/inspect calls (includes conversation history)
 - `GET /api/calls/:callId/events` — SSE stream of call status + AI conversation turns
 - `POST /api/calls/webhook` — Telnyx webhook receiver (call.initiated/answered/transcription/hangup)
@@ -186,23 +189,24 @@ cancel on an already-canceled row is a no-op success, and canceling something al
 transient Google error can't leave an appointment marked canceled locally while still live on the
 real calendar.
 
-## Real-time media streaming (barge-in) — opt-in, `apps/api/src/media-stream/`
+## Real-time media streaming (barge-in) — the default calling path, `apps/api/src/media-stream/`
 
-The call flow above is turn-based: Telnyx transcribes a full utterance, then the AI's whole reply is
-sent to `calls.speak` — there's no way to know a caller started talking again while the AI is still
-speaking, so it can't stop mid-sentence. Setting `MEDIA_STREAM_ENABLED=true` opts a call into an
-alternate path built on Telnyx's bidirectional Media Streaming API (raw audio over a WebSocket
-instead of transcribe-then-speak webhooks) that supports genuine mid-sentence interruption. The
-webhook-based flow above is completely unaffected — this is a parallel path, not a replacement.
+The alternative to this is a turn-based flow: Telnyx transcribes a full utterance, then the AI's
+whole reply is sent to `calls.speak` — there's no way to know a caller started talking again while
+the AI is still speaking, so it can't stop mid-sentence. `MEDIA_STREAM_ENABLED` (on by default) puts
+every call on an alternate path built on Telnyx's bidirectional Media Streaming API (raw audio over a
+WebSocket instead of transcribe-then-speak webhooks) that supports genuine mid-sentence interruption.
+The legacy webhook-based flow still exists as a parallel path for anyone who opts out - see below.
 
-- **Enabling it**: `MEDIA_STREAM_ENABLED=true` turns it on globally for inbound calls; the manual
-  `POST /api/calls/outbound` endpoint also accepts `{ "streaming": true }` per-call (still requires
-  the global flag - a per-request flag alone can't enable a feature that's off globally). Campaigns
-  (`POST /api/campaigns` `{ streamingEnabled: true }`) and follow-ups (`POST /api/followups`
-  `{ streamingEnabled: true }`, or automatically inherited from the current call when the
-  `schedule_followup` tool books one mid-conversation) can also opt their automated dials into
-  streaming - `processCampaignContactJob`/`processFollowUpJob` thread the row's flag through to
-  `placeOutboundCall`, still gated by the global flag at actual dial time.
+- **Opting out**: set `MEDIA_STREAM_ENABLED=false` to turn streaming off globally and fall back to
+  the legacy webhook flow for every call (inbound and outbound). Per-call, the manual
+  `POST /api/calls/outbound` endpoint accepts `{ "streaming": false }` to opt just that call out
+  (a per-request `true` can't turn the feature back on if the global flag is off). Campaigns
+  (`POST /api/campaigns` `{ streamingEnabled: false }`) and follow-ups (`POST /api/followups`
+  `{ streamingEnabled: false }`) can likewise opt their automated dials out - `processCampaignContactJob`/
+  `processFollowUpJob` thread the row's flag through to `placeOutboundCall`, still gated by the global
+  flag at actual dial time. A follow-up booked mid-conversation via the `schedule_followup` tool
+  inherits the current call's streaming setting automatically.
 - **`apps/api/src/media-stream/mediaStreamServer.ts`** — a `ws` WebSocket server attached to the
   existing Express `http.Server` (not a separate app/process - it needs the same Prisma client, tool
   builders, and AI agent config `apps/api` already loads). Telnyx connects here once per streaming
@@ -370,13 +374,13 @@ mid-call to trigger retention logic), and an analytics dashboard (call/campaign/
 These fit into the same architecture — new routes/services/tools/pages — and are natural next
 increments.
 
-Real-time bidirectional media streaming with barge-in is now implemented (see the section above) but
-only as an opt-in MVP, not the default: it's a one-shot (non-streaming) TTS synthesis rather than
-true streaming TTS (so time-to-first-audio isn't as low as it could be), one global inbound flag
-rather than per-DID/per-campaign opt-in, and no custom paralinguistic fillers/pacing — voice quality
-is whatever ElevenLabs' plain REST endpoint returns. Phase 2 (streaming TTS + streaming/incremental
-LLM output) and Phase 3 (multi-vendor STT/TTS abstraction) are natural next increments on the same
-foundation.
+Real-time bidirectional media streaming with barge-in is now implemented and is the default calling
+path (see the section above), but it's still an MVP: it's a one-shot (non-streaming) TTS synthesis
+rather than true streaming TTS (so time-to-first-audio isn't as low as it could be), one global
+flag rather than per-DID/per-campaign granularity, and no custom paralinguistic fillers/pacing —
+voice quality is whatever ElevenLabs' plain REST endpoint returns. Phase 2 (streaming TTS +
+streaming/incremental LLM output) and Phase 3 (multi-vendor STT/TTS abstraction) are natural next
+increments on the same foundation.
 
 TCPA compliance is partial (see the section above for what's covered - consent tracking and calling
 hours). Still missing: National DNC Registry scrubbing (the FCC's registry, distinct from this app's

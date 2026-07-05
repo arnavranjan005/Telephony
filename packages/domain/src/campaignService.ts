@@ -14,10 +14,10 @@ export interface CampaignContactInput {
 export interface CreateCampaignInput {
   name: string;
   script?: string;
-  /** Opts every dial this campaign makes into real-time media streaming
-   * (barge-in) - see outboundDialService.ts's PlaceOutboundCallOptions. Still
-   * gated by the global MEDIA_STREAM_ENABLED flag at dial time, same as every
-   * other streaming opt-in path in the app. */
+  /** Every dial this campaign makes uses real-time media streaming (barge-in)
+   * by default - see outboundDialService.ts's PlaceOutboundCallOptions. Pass
+   * `false` to opt this campaign out. Still gated by the global
+   * MEDIA_STREAM_ENABLED flag at dial time either way. */
   streamingEnabled?: boolean;
   contacts: CampaignContactInput[];
 }
@@ -31,7 +31,7 @@ export interface CreateCampaignInput {
 export async function createCampaign(input: CreateCampaignInput) {
   const campaign = await prisma.$transaction(async (tx) => {
     const created = await tx.campaign.create({
-      data: { name: input.name, script: input.script, streamingEnabled: input.streamingEnabled ?? false },
+      data: { name: input.name, script: input.script, streamingEnabled: input.streamingEnabled ?? true },
     });
 
     for (const contact of input.contacts) {
