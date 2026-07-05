@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import type { Call, CallWithDetails, DashboardEvent, MessageRole } from "@telephony/shared-types";
 import { apiClient } from "@/lib/apiClient";
 import { useEventStream } from "@/hooks/useEventStream";
+import { useElapsedSeconds } from "@/hooks/useElapsedSeconds";
+import { LiveCallTranscript } from "@/components/live-call-transcript";
 import { StatusBadge } from "@/components/status-badge";
 import { formatDateTime, formatDuration } from "@/lib/format";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -11,6 +13,11 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { ArrowDownLeft, ArrowUpRight } from "lucide-react";
+
+function LiveDuration({ startedAt }: { startedAt: string | null }) {
+  const elapsed = useElapsedSeconds(startedAt);
+  return <span className="tabular-nums">{elapsed !== null ? formatDuration(elapsed) : "—"}</span>;
+}
 
 const ROLE_STYLES: Record<MessageRole, string> = {
   USER: "bg-muted",
@@ -40,7 +47,11 @@ export default function CallsPage() {
   useEventStream(
     useCallback(
       (event: DashboardEvent) => {
-        if (event.type.startsWith("call.")) load();
+        // call.transcript is per-turn chatter that never changes anything
+        // rendered in this table (direction/status/duration/etc) - reloading
+        // the whole list for it would refetch on every utterance of every
+        // live call for no visible change.
+        if (event.type.startsWith("call.") && event.type !== "call.transcript") load();
       },
       [load]
     )
@@ -56,6 +67,11 @@ export default function CallsPage() {
       .getCall(selectedCallId)
       .then((data) => setDetail(data.call))
       .finally(() => setDetailLoading(false));
+  }, [selectedCallId]);
+
+  const refreshDetail = useCallback(() => {
+    if (!selectedCallId) return;
+    apiClient.getCall(selectedCallId).then((data) => setDetail(data.call));
   }, [selectedCallId]);
 
   return (
@@ -100,9 +116,20 @@ export default function CallsPage() {
                 <TableCell className="font-mono text-xs">{call.fromNumber}</TableCell>
                 <TableCell className="font-mono text-xs">{call.toNumber}</TableCell>
                 <TableCell>
-                  <StatusBadge status={call.status} />
+                  <div className="flex items-center gap-1.5">
+                    <StatusBadge status={call.status} />
+                    {call.status === "IN_PROGRESS" && (
+                      <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" title="Live" />
+                    )}
+                  </div>
                 </TableCell>
-                <TableCell className="tabular-nums">{formatDuration(call.durationSeconds)}</TableCell>
+                <TableCell>
+                  {call.status === "IN_PROGRESS" ? (
+                    <LiveDuration startedAt={call.startedAt} />
+                  ) : (
+                    <span className="tabular-nums">{formatDuration(call.durationSeconds)}</span>
+                  )}
+                </TableCell>
                 <TableCell className="text-muted-foreground">{formatDateTime(call.startedAt ?? call.createdAt)}</TableCell>
               </TableRow>
             ))}
@@ -126,7 +153,11 @@ export default function CallsPage() {
               <>
                 <div className="flex flex-wrap items-center gap-2 text-sm">
                   <StatusBadge status={detail.status} />
-                  <span className="text-muted-foreground">{formatDuration(detail.durationSeconds)}</span>
+                  {detail.status === "IN_PROGRESS" ? (
+                    <LiveDuration startedAt={detail.startedAt} />
+                  ) : (
+                    <span className="text-muted-foreground">{formatDuration(detail.durationSeconds)}</span>
+                  )}
                   {detail.outcome && <span className="text-muted-foreground">· {detail.outcome}</span>}
                 </div>
 
@@ -141,26 +172,37 @@ export default function CallsPage() {
                   </div>
                 )}
 
-                <div>
-                  <p className="mb-2 text-sm font-medium">Transcript</p>
-                  {detail.messages.length === 0 && (
-                    <p className="text-sm text-muted-foreground">No conversation recorded for this call.</p>
-                  )}
-                  <div className="flex flex-col gap-2">
-                    {detail.messages
-                      .filter((m) => m.role !== "SYSTEM")
-                      .map((message) => (
-                        <div key={message.id} className={`rounded-md px-3 py-2 text-sm ${ROLE_STYLES[message.role]}`}>
-                          <div className="mb-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                            <span className="font-medium">{message.role}</span>
-                            {message.toolName && <span>· {message.toolName}</span>}
-                            {message.interrupted && <span>· interrupted</span>}
+                {(detail.messages.length > 0 || detail.status !== "IN_PROGRESS") && (
+                  <div>
+                    <p className="mb-2 text-sm font-medium">Transcript</p>
+                    {detail.messages.length === 0 && (
+                      <p className="text-sm text-muted-foreground">No conversation recorded for this call.</p>
+                    )}
+                    <div className="flex flex-col gap-2">
+                      {detail.messages
+                        .filter((m) => m.role !== "SYSTEM")
+                        .map((message) => (
+                          <div key={message.id} className={`rounded-md px-3 py-2 text-sm ${ROLE_STYLES[message.role]}`}>
+                            <div className="mb-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                              <span className="font-medium">{message.role}</span>
+                              {message.toolName && <span>· {message.toolName}</span>}
+                              {message.interrupted && <span>· interrupted</span>}
+                            </div>
+                            <p className="whitespace-pre-wrap">{message.content}</p>
                           </div>
-                          <p className="whitespace-pre-wrap">{message.content}</p>
-                        </div>
-                      ))}
+                        ))}
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {detail.status === "IN_PROGRESS" && (
+                  <div className="rounded-md border p-3">
+                    <p className="mb-2 text-sm font-medium">
+                      {detail.messages.length > 0 ? "Live continuation" : "Live transcript"}
+                    </p>
+                    <LiveCallTranscript callId={detail.id} onHangup={refreshDetail} />
+                  </div>
+                )}
               </>
             )}
           </div>

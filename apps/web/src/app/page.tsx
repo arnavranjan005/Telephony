@@ -7,6 +7,7 @@ import { apiClient } from "@/lib/apiClient";
 import { useEventStream } from "@/hooks/useEventStream";
 import { StatCard } from "@/components/stat-card";
 import { ActivityFeed } from "@/components/activity-feed";
+import { LiveCallsPanel } from "@/components/live-calls-panel";
 import { StatusBadge } from "@/components/status-badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -33,6 +34,12 @@ const chartConfig = {
 
 const MAX_ACTIVITY = 25;
 
+// Per-turn chatter from a live call (LiveCallsPanel/LiveCallTranscript
+// already surface these) - not dashboard lifecycle events, so they'd only
+// flood the activity feed with unlabeled entries and trigger a redundant
+// stats refetch on every single conversation turn of every in-progress call.
+const PER_CALL_CHATTER_EVENTS = new Set(["conversation.message", "call.transcript"]);
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [timeseries, setTimeseries] = useState<CallTimeseriesPoint[] | null>(null);
@@ -57,6 +64,7 @@ export default function DashboardPage() {
   useEventStream(
     useCallback(
       (event: DashboardEvent) => {
+        if (PER_CALL_CHATTER_EVENTS.has(event.type)) return;
         setEvents((prev) => [event, ...prev].slice(0, MAX_ACTIVITY));
         loadAll();
       },
@@ -93,6 +101,8 @@ export default function DashboardPage() {
           hint={stats ? `of ${stats.totalCalls} total calls` : undefined}
         />
       </div>
+
+      <LiveCallsPanel />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
