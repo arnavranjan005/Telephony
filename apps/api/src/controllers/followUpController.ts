@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import { FollowUpStatus } from "@telephony/database";
 import { cancelFollowUp, createFollowUp, listFollowUps } from "@telephony/domain";
+import { callEventBus } from "../sse/eventBus";
 
 const createFollowUpSchema = z.object({
   leadId: z.string().min(1),
@@ -21,6 +22,7 @@ export async function postFollowUp(req: Request, res: Response) {
     streamingEnabled: parsed.data.streamingEnabled,
   });
 
+  callEventBus.publishGlobal("followup.created", { followUp });
   res.status(201).json({ followUp });
 }
 
@@ -36,5 +38,6 @@ export async function postCancelFollowUp(req: Request, res: Response) {
   if (result.outcome === "not_cancelable") {
     return res.status(409).json({ error: "Follow-up can no longer be canceled", followUp: result.followUp });
   }
+  callEventBus.publishGlobal("followup.canceled", { followUp: result.followUp });
   res.json({ followUp: result.followUp });
 }

@@ -7,6 +7,7 @@ import {
   pauseCampaign,
   startCampaign,
 } from "@telephony/domain";
+import { callEventBus } from "../sse/eventBus";
 
 const contactSchema = z.object({
   leadId: z.string().optional(),
@@ -27,6 +28,7 @@ export async function postCampaign(req: Request, res: Response) {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const campaign = await createCampaign(parsed.data);
+  callEventBus.publishGlobal("campaign.created", { campaign });
   res.status(201).json({ campaign });
 }
 
@@ -43,10 +45,12 @@ export async function getCampaignById(req: Request, res: Response) {
 
 export async function postStartCampaign(req: Request, res: Response) {
   const campaign = await startCampaign(req.params.campaignId);
+  callEventBus.publishGlobal("campaign.updated", { campaign });
   res.json({ campaign });
 }
 
 export async function postPauseCampaign(req: Request, res: Response) {
   const campaign = await pauseCampaign(req.params.campaignId);
+  callEventBus.publishGlobal("campaign.updated", { campaign });
   res.json({ campaign });
 }

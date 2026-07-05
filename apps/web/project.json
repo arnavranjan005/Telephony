@@ -6,7 +6,11 @@
   "targets": {
     "build": {
       "executor": "nx:run-commands",
-      "options": { "command": "npm run build", "cwd": "apps/web" },
+      "options": {
+        "command": "npm run build",
+        "cwd": "apps/web",
+        "env": { "NODE_ENV": "production" }
+      },
       "outputs": ["{projectRoot}/out", "{projectRoot}/.next"]
     },
     "typecheck": {

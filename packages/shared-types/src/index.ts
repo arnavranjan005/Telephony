@@ -4,3 +4,5 @@ export * from "./campaign";
 export * from "./followUp";
 export * from "./dnc";
 export * from "./appointment";
+export * from "./conversationMessage";
+export * from "./analytics";

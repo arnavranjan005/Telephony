@@ -1,3 +1,5 @@
+import type { Lead } from "./lead";
+
 export type FollowUpStatus =
   | "PENDING"
   | "CALLING"
@@ -15,4 +17,15 @@ export interface FollowUp {
   scheduledAt: string;
   status: FollowUpStatus;
   createdAt: string;
+}
+
+export interface FollowUpWithLead extends FollowUp {
+  lead: Lead;
+}
+
+export interface CreateFollowUpInput {
+  leadId: string;
+  scheduledAt: string;
+  reason?: string;
+  streamingEnabled?: boolean;
 }

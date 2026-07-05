@@ -47,6 +47,7 @@ export async function createOutboundCall(req: Request, res: Response) {
   }
 
   const call = await prisma.call.findUnique({ where: { id: result.callId } });
+  callEventBus.publishGlobal("call.created", { call });
   res.status(201).json({ call });
 }
 
@@ -154,6 +155,7 @@ export async function handleTelnyxWebhook(req: Request, res: Response) {
               streamingEnabled: env.MEDIA_STREAM_ENABLED,
             },
           });
+          callEventBus.publishGlobal("call.created", { call });
         }
         if (clientStateCallId === undefined) {
           const streaming = call.streamingEnabled

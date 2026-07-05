@@ -1,3 +1,5 @@
+import type { Lead } from "./lead";
+
 export type AppointmentStatus = "SCHEDULED" | "CONFIRMED" | "CANCELED" | "COMPLETED";
 
 export interface Appointment {
@@ -12,4 +14,8 @@ export interface Appointment {
   callId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AppointmentWithLead extends Appointment {
+  lead: Lead | null;
 }

@@ -2,6 +2,7 @@ import { ToolDefinition } from "../types";
 import { createAppointment, isSlotAvailable } from "../../google-calendar/calendarService";
 import { cancelAppointmentById, findCancelableAppointmentId } from "../../appointmentService";
 import { prisma } from "@telephony/database";
+import { callEventBus } from "../../sse/eventBus";
 
 export interface CalendarToolContext {
   leadId?: string;
@@ -73,6 +74,7 @@ export function buildCalendarTools(context: CalendarToolContext): ToolDefinition
         },
       });
 
+      callEventBus.publishGlobal("appointment.created", { appointment });
       return { booked: true, appointmentId: appointment.id, calendarEventId: event.eventId };
     },
   };
@@ -110,6 +112,7 @@ export function buildCalendarTools(context: CalendarToolContext): ToolDefinition
       if (result.outcome === "not_cancelable") {
         return { canceled: false, reason: "That appointment is already completed and can't be canceled" };
       }
+      callEventBus.publishGlobal("appointment.canceled", { appointment: result.appointment });
       return { canceled: true, appointmentId: result.appointment.id };
     },
   };
