@@ -3,6 +3,7 @@
 // but applied globally since bullmq.Queue connects eagerly on construction.
 export class Queue {
   add = jest.fn().mockResolvedValue({ id: "mock-job-id" });
+  getJobs = jest.fn().mockResolvedValue([]);
   close = jest.fn().mockResolvedValue(undefined);
   constructor(_name: string, _opts?: unknown) {}
 }

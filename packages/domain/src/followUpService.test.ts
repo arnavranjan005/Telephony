@@ -36,9 +36,11 @@ jest.mock("./outboundDialService", () => ({
 
 const enqueueFollowUpDial = jest.fn();
 const enqueueFollowUpDialAt = jest.fn();
+const removeFollowUpDialJobs = jest.fn();
 jest.mock("@telephony/queue", () => ({
   enqueueFollowUpDial: (...args: unknown[]) => enqueueFollowUpDial(...args),
   enqueueFollowUpDialAt: (...args: unknown[]) => enqueueFollowUpDialAt(...args),
+  removeFollowUpDialJobs: (...args: unknown[]) => removeFollowUpDialJobs(...args),
 }));
 
 const isWithinCallingHours = jest.fn();
@@ -224,7 +226,7 @@ describe("followUpService", () => {
   });
 
   describe("cancelFollowUp", () => {
-    it("atomically cancels a PENDING follow-up via a conditional update", async () => {
+    it("atomically cancels a PENDING follow-up via a conditional update, and removes its pending BullMQ job(s)", async () => {
       followUpUpdateMany.mockResolvedValue({ count: 1 });
       followUpFindUniqueOrThrow.mockResolvedValue({ id: "fu_1", status: "CANCELED" });
 
@@ -234,25 +236,28 @@ describe("followUpService", () => {
         where: { id: "fu_1", status: "PENDING" },
         data: { status: "CANCELED" },
       });
+      expect(removeFollowUpDialJobs).toHaveBeenCalledWith("fu_1");
       expect(result).toEqual({ outcome: "canceled", followUp: { id: "fu_1", status: "CANCELED" } });
     });
 
-    it("is idempotent - repeating a cancel on an already-CANCELED row succeeds without erroring", async () => {
+    it("is idempotent - repeating a cancel on an already-CANCELED row succeeds without erroring or re-scanning the queue", async () => {
       followUpUpdateMany.mockResolvedValue({ count: 0 });
       followUpFindUnique.mockResolvedValue({ id: "fu_1", status: "CANCELED" });
 
       const result = await cancelFollowUp("fu_1");
 
       expect(result).toEqual({ outcome: "canceled", followUp: { id: "fu_1", status: "CANCELED" } });
+      expect(removeFollowUpDialJobs).not.toHaveBeenCalled();
     });
 
-    it("reports not_cancelable instead of overwriting a row the worker already claimed (CALLING)", async () => {
+    it("reports not_cancelable instead of overwriting a row the worker already claimed (CALLING), and leaves its job alone", async () => {
       followUpUpdateMany.mockResolvedValue({ count: 0 });
       followUpFindUnique.mockResolvedValue({ id: "fu_1", status: "CALLING" });
 
       const result = await cancelFollowUp("fu_1");
 
       expect(result).toEqual({ outcome: "not_cancelable", followUp: { id: "fu_1", status: "CALLING" } });
+      expect(removeFollowUpDialJobs).not.toHaveBeenCalled();
     });
 
     it("reports not_found for an unknown id", async () => {
@@ -262,6 +267,7 @@ describe("followUpService", () => {
       const result = await cancelFollowUp("missing");
 
       expect(result).toEqual({ outcome: "not_found" });
+      expect(removeFollowUpDialJobs).not.toHaveBeenCalled();
     });
 
     it("proves distributed-safety: concurrent cancel + dial-claim on the same row only lets one side win", async () => {

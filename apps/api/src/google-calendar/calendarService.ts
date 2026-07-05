@@ -61,8 +61,11 @@ export async function isSlotAvailable(startTime: string, endTime: string): Promi
 export async function createAppointment(input: CreateAppointmentInput): Promise<CreatedAppointment> {
   const calendar = getCalendarClient();
 
+  // sendUpdates defaults to "none" on Google's API - without it, a caller who
+  // gave their email would never actually get a calendar invite.
   const response = await calendar.events.insert({
     calendarId: env.GOOGLE_CALENDAR_ID,
+    sendUpdates: "all",
     requestBody: {
       summary: input.summary,
       description: input.description,
@@ -82,5 +85,7 @@ export async function createAppointment(input: CreateAppointmentInput): Promise<
 
 export async function cancelAppointment(eventId: string): Promise<void> {
   const calendar = getCalendarClient();
-  await calendar.events.delete({ calendarId: env.GOOGLE_CALENDAR_ID, eventId });
+  // sendUpdates defaults to "none" - without it, an attendee who was invited
+  // would never find out the appointment was canceled.
+  await calendar.events.delete({ calendarId: env.GOOGLE_CALENDAR_ID, eventId, sendUpdates: "all" });
 }

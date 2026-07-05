@@ -1,5 +1,5 @@
 import { FollowUp, FollowUpStatus, prisma } from "@telephony/database";
-import { enqueueFollowUpDial, enqueueFollowUpDialAt } from "@telephony/queue";
+import { enqueueFollowUpDial, enqueueFollowUpDialAt, removeFollowUpDialJobs } from "@telephony/queue";
 import { env } from "@telephony/config";
 import { placeOutboundCall } from "./outboundDialService";
 import { isWithinCallingHours, nextCallingWindowStart } from "./compliance/callingHours";
@@ -45,6 +45,11 @@ export type CancelFollowUpResult =
  * rather than blindly forced to CANCELED. Repeating a cancel on an
  * already-CANCELED row is a no-op success, so it's safe to call from an AI
  * tool the model might invoke twice, or a retried client request.
+ *
+ * Winning the claim also removes the row's pending BullMQ dial job(s), so
+ * canceling actually unwinds the "this will place a call later" side effect
+ * instead of just flipping a status flag and leaving a dead job to fire and
+ * no-op on its own later.
  */
 export async function cancelFollowUp(id: string): Promise<CancelFollowUpResult> {
   const claimed = await prisma.followUp.updateMany({
@@ -53,6 +58,7 @@ export async function cancelFollowUp(id: string): Promise<CancelFollowUpResult> 
   });
 
   if (claimed.count === 1) {
+    await removeFollowUpDialJobs(id);
     return { outcome: "canceled", followUp: await prisma.followUp.findUniqueOrThrow({ where: { id } }) };
   }
 
