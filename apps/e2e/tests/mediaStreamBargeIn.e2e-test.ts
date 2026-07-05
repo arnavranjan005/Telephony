@@ -75,6 +75,21 @@ jest.mock("telnyx", () => {
   }));
 });
 
+const freebusyQuery = jest.fn();
+const eventsInsert = jest.fn();
+
+jest.mock("googleapis", () => ({
+  google: {
+    auth: {
+      OAuth2: jest.fn().mockImplementation(() => ({ setCredentials: jest.fn() })),
+    },
+    calendar: jest.fn(() => ({
+      freebusy: { query: freebusyQuery },
+      events: { insert: eventsInsert, delete: jest.fn() },
+    })),
+  },
+}));
+
 type DeepgramSocketMock = {
   sendMedia: jest.Mock;
   close: jest.Mock;
@@ -229,6 +244,8 @@ beforeEach(async () => {
   lastDeepgramSocket = null;
   scriptedReplies = [];
   duringGeneration = null;
+  freebusyQuery.mockReset();
+  eventsInsert.mockReset();
   global.fetch = jest.fn(async () => ({
     ok: true,
     arrayBuffer: async () => makePcmBuffer(10),
@@ -454,6 +471,84 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
 
     const lead = await prisma.lead.findUniqueOrThrow({ where: { id: call.leadId! } });
     expect(lead.notes).toBe("Ready to buy now, budget confirmed");
+
+    await waitFor(() => frames.filter((f) => f.event === "media").length > 1);
+
+    client.close();
+  });
+
+  it("drives a caller utterance through availability-check -> booking tool calls to a real Appointment row, over the real stream", async () => {
+    await telnyxWebhook("call.initiated", { call_control_id: "cc-stream-5", from: "+15556669999", to: "+15550000000" });
+    await waitFor(async () => (await prisma.call.findUnique({ where: { telnyxCallControlId: "cc-stream-5" } })) !== null);
+    await telnyxWebhook("call.answered", { call_control_id: "cc-stream-5" });
+    await waitFor(() => telnyxAnswerCalls.length >= 1);
+    const call = await prisma.call.findUniqueOrThrow({ where: { telnyxCallControlId: "cc-stream-5" } });
+
+    const { ws: client, frames } = await openMediaStreamSocket("cc-stream-5");
+    await waitFor(() => frames.some((f) => f.event === "media")); // greeting
+    await waitFor(() => lastDeepgramSocket !== null);
+
+    freebusyQuery.mockResolvedValue({ data: { calendars: { primary: { busy: [] } } } });
+    eventsInsert.mockResolvedValue({
+      data: {
+        id: "evt_stream_e2e",
+        htmlLink: "https://calendar.google.com/evt_stream_e2e",
+        start: { dateTime: "2026-08-01T14:00:00Z" },
+        end: { dateTime: "2026-08-01T14:30:00Z" },
+      },
+    });
+
+    scriptedReplies = [
+      {
+        content: null,
+        toolCalls: [
+          {
+            id: "call-1",
+            name: "check_appointment_availability",
+            args: { startTime: "2026-08-01T14:00:00Z", endTime: "2026-08-01T14:30:00Z" },
+          },
+        ],
+      },
+      {
+        content: null,
+        toolCalls: [
+          {
+            id: "call-2",
+            name: "schedule_appointment",
+            args: {
+              title: "Consultation call",
+              startTime: "2026-08-01T14:00:00Z",
+              endTime: "2026-08-01T14:30:00Z",
+              attendeeEmail: "lead@example.com",
+            },
+          },
+        ],
+      },
+      { content: "Great, you're booked for 2pm on August 1st.", toolCalls: [] },
+    ];
+
+    emitTranscript("I'd like to book a consultation for August 1st at 2pm, my email is lead@example.com", true, true);
+
+    await waitFor(async () => (await prisma.appointment.findFirst({ where: { callId: call.id } })) !== null, 15000);
+
+    const messages = await prisma.conversationMessage.findMany({ where: { callId: call.id }, orderBy: { createdAt: "asc" } });
+    expect(messages.map((m) => [m.role, m.toolName])).toEqual([
+      ["USER", null],
+      ["ASSISTANT", "check_appointment_availability"],
+      ["TOOL", "check_appointment_availability"],
+      ["ASSISTANT", "schedule_appointment"],
+      ["TOOL", "schedule_appointment"],
+      ["ASSISTANT", null],
+    ]);
+    expect(JSON.parse(messages[2].content)).toEqual({ available: true });
+    expect(JSON.parse(messages[4].content).booked).toBe(true);
+
+    const appointment = await prisma.appointment.findFirstOrThrow({ where: { callId: call.id } });
+    expect(appointment.googleEventId).toBe("evt_stream_e2e");
+    expect(appointment.leadId).toBe(call.leadId);
+    expect(eventsInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ requestBody: expect.objectContaining({ summary: "Consultation call" }) })
+    );
 
     await waitFor(() => frames.filter((f) => f.event === "media").length > 1);
 
