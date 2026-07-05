@@ -29,6 +29,18 @@ describe("Follow-up routes", () => {
     });
   });
 
+  it("POST /api/followups passes streamingEnabled through when the caller opts in", async () => {
+    createFollowUp.mockResolvedValue({ id: "fu_1" });
+
+    await request(app)
+      .post("/api/followups")
+      .send({ leadId: "lead_1", scheduledAt: "2025-01-16T18:00:00Z", streamingEnabled: true });
+
+    expect(createFollowUp).toHaveBeenCalledWith(
+      expect.objectContaining({ leadId: "lead_1", streamingEnabled: true })
+    );
+  });
+
   it("POST /api/followups rejects a request missing leadId", async () => {
     const res = await request(app).post("/api/followups").send({ scheduledAt: "2025-01-16T18:00:00Z" });
     expect(res.status).toBe(400);

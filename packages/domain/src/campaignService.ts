@@ -1,5 +1,6 @@
 import { CampaignContactStatus, CampaignStatus, prisma } from "@telephony/database";
 import { enqueueCampaignContactDial, enqueueCampaignContactDialAt } from "@telephony/queue";
+import { env } from "@telephony/config";
 import { placeOutboundCall } from "./outboundDialService";
 import { isWithinCallingHours, nextCallingWindowStart } from "./compliance/callingHours";
 
@@ -13,6 +14,11 @@ export interface CampaignContactInput {
 export interface CreateCampaignInput {
   name: string;
   script?: string;
+  /** Opts every dial this campaign makes into real-time media streaming
+   * (barge-in) - see outboundDialService.ts's PlaceOutboundCallOptions. Still
+   * gated by the global MEDIA_STREAM_ENABLED flag at dial time, same as every
+   * other streaming opt-in path in the app. */
+  streamingEnabled?: boolean;
   contacts: CampaignContactInput[];
 }
 
@@ -24,7 +30,9 @@ export interface CreateCampaignInput {
  */
 export async function createCampaign(input: CreateCampaignInput) {
   const campaign = await prisma.$transaction(async (tx) => {
-    const created = await tx.campaign.create({ data: { name: input.name, script: input.script } });
+    const created = await tx.campaign.create({
+      data: { name: input.name, script: input.script, streamingEnabled: input.streamingEnabled ?? false },
+    });
 
     for (const contact of input.contacts) {
       let leadId = contact.leadId;
@@ -114,7 +122,7 @@ export async function processCampaignContactJob(campaignContactId: string): Prom
 
   const contact = await prisma.campaignContact.findUniqueOrThrow({
     where: { id: campaignContactId },
-    include: { lead: true },
+    include: { lead: true, campaign: true },
   });
 
   // TCPA calling-hours (8am-9pm local to the number) is a *when*, not a
@@ -130,7 +138,10 @@ export async function processCampaignContactJob(campaignContactId: string): Prom
     return;
   }
 
-  const result = await placeOutboundCall(contact.lead.phoneNumber, contact.leadId, { requireConsent: true });
+  const result = await placeOutboundCall(contact.lead.phoneNumber, contact.leadId, {
+    requireConsent: true,
+    streamingEnabled: Boolean(contact.campaign.streamingEnabled) && env.MEDIA_STREAM_ENABLED,
+  });
 
   if (result.outcome === "skipped_dnc") {
     await prisma.campaignContact.update({

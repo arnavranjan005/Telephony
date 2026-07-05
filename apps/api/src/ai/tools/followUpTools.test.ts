@@ -66,4 +66,19 @@ describe("followUpTools", () => {
     expect(result).toMatchObject({ scheduled: true });
     expect(isWithinCallingHours).not.toHaveBeenCalled();
   });
+
+  it("schedule_followup inherits the current call's streaming mode onto the scheduled callback", async () => {
+    createFollowUp.mockResolvedValue({ id: "fu_1", scheduledAt: new Date("2025-01-16T18:00:00Z") });
+
+    const [scheduleFollowUp] = buildFollowUpTools({
+      leadId: "lead_1",
+      phoneNumber: "+12125551234",
+      streamingEnabled: true,
+    });
+    await scheduleFollowUp.handler({ scheduledAt: "2025-01-16T18:00:00Z" });
+
+    expect(createFollowUp).toHaveBeenCalledWith(
+      expect.objectContaining({ leadId: "lead_1", streamingEnabled: true })
+    );
+  });
 });

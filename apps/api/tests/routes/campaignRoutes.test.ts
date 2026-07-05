@@ -34,6 +34,18 @@ describe("Campaign routes", () => {
     });
   });
 
+  it("POST /api/campaigns passes streamingEnabled through when the caller opts in", async () => {
+    createCampaign.mockResolvedValue({ id: "camp_1", name: "Spring outreach" });
+
+    await request(app)
+      .post("/api/campaigns")
+      .send({ name: "Spring outreach", streamingEnabled: true, contacts: [] });
+
+    expect(createCampaign).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Spring outreach", streamingEnabled: true })
+    );
+  });
+
   it("POST /api/campaigns rejects a request missing name", async () => {
     const res = await request(app).post("/api/campaigns").send({ contacts: [] });
     expect(res.status).toBe(400);

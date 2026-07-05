@@ -181,8 +181,12 @@ webhook-based flow above is completely unaffected — this is a parallel path, n
 
 - **Enabling it**: `MEDIA_STREAM_ENABLED=true` turns it on globally for inbound calls; the manual
   `POST /api/calls/outbound` endpoint also accepts `{ "streaming": true }` per-call (still requires
-  the global flag - a per-request flag alone can't enable a feature that's off globally). Campaign/
-  follow-up automated dialing does not use streaming mode in this iteration.
+  the global flag - a per-request flag alone can't enable a feature that's off globally). Campaigns
+  (`POST /api/campaigns` `{ streamingEnabled: true }`) and follow-ups (`POST /api/followups`
+  `{ streamingEnabled: true }`, or automatically inherited from the current call when the
+  `schedule_followup` tool books one mid-conversation) can also opt their automated dials into
+  streaming - `processCampaignContactJob`/`processFollowUpJob` thread the row's flag through to
+  `placeOutboundCall`, still gated by the global flag at actual dial time.
 - **`apps/api/src/media-stream/mediaStreamServer.ts`** — a `ws` WebSocket server attached to the
   existing Express `http.Server` (not a separate app/process - it needs the same Prisma client, tool
   builders, and AI agent config `apps/api` already loads). Telnyx connects here once per streaming

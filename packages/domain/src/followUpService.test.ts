@@ -44,10 +44,14 @@ jest.mock("./compliance/callingHours", () => ({
   nextCallingWindowStart: (...args: unknown[]) => nextCallingWindowStart(...args),
 }));
 
+const mockEnv = { MEDIA_STREAM_ENABLED: false };
+jest.mock("@telephony/config", () => ({ env: mockEnv }));
+
 import { createFollowUp, processFollowUpJob } from "./followUpService";
 
 beforeEach(() => {
   isWithinCallingHours.mockReturnValue(true); // default: every existing test dials as if within the legal window
+  mockEnv.MEDIA_STREAM_ENABLED = false;
 });
 
 describe("followUpService", () => {
@@ -81,7 +85,10 @@ describe("followUpService", () => {
         where: { id: "fu_1", status: "PENDING" },
         data: { status: "CALLING" },
       });
-      expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", "lead_1", { requireConsent: true });
+      expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", "lead_1", {
+        requireConsent: true,
+        streamingEnabled: false,
+      });
       expect(followUpUpdate).toHaveBeenCalledWith({ where: { id: "fu_1" }, data: { callId: "call_1" } });
     });
 
@@ -170,6 +177,44 @@ describe("followUpService", () => {
       expect(placeOutboundCall).not.toHaveBeenCalled();
       expect(followUpUpdate).toHaveBeenCalledWith({ where: { id: "fu_1" }, data: { status: "PENDING" } });
       expect(enqueueFollowUpDialAt).toHaveBeenCalledWith("fu_1", nextWindow);
+    });
+
+    it("dials with streamingEnabled: true when the row opted in and MEDIA_STREAM_ENABLED is globally on", async () => {
+      mockEnv.MEDIA_STREAM_ENABLED = true;
+      followUpUpdateMany.mockResolvedValue({ count: 1 });
+      followUpFindUniqueOrThrow.mockResolvedValue({
+        id: "fu_1",
+        leadId: "lead_1",
+        lead: { phoneNumber: "+15551234567" },
+        streamingEnabled: true,
+      });
+      placeOutboundCall.mockResolvedValue({ outcome: "dialed", callId: "call_1" });
+
+      await processFollowUpJob("fu_1");
+
+      expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", "lead_1", {
+        requireConsent: true,
+        streamingEnabled: true,
+      });
+    });
+
+    it("does not dial with streaming when the row opted in but MEDIA_STREAM_ENABLED is globally off", async () => {
+      mockEnv.MEDIA_STREAM_ENABLED = false;
+      followUpUpdateMany.mockResolvedValue({ count: 1 });
+      followUpFindUniqueOrThrow.mockResolvedValue({
+        id: "fu_1",
+        leadId: "lead_1",
+        lead: { phoneNumber: "+15551234567" },
+        streamingEnabled: true,
+      });
+      placeOutboundCall.mockResolvedValue({ outcome: "dialed", callId: "call_1" });
+
+      await processFollowUpJob("fu_1");
+
+      expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", "lead_1", {
+        requireConsent: true,
+        streamingEnabled: false,
+      });
     });
   });
 });

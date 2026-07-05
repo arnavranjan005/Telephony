@@ -71,10 +71,14 @@ jest.mock("./compliance/callingHours", () => ({
   nextCallingWindowStart: (...args: unknown[]) => nextCallingWindowStart(...args),
 }));
 
+const mockEnv = { MEDIA_STREAM_ENABLED: false };
+jest.mock("@telephony/config", () => ({ env: mockEnv }));
+
 import { createCampaign, processCampaignContactJob, startCampaign } from "./campaignService";
 
 beforeEach(() => {
   isWithinCallingHours.mockReturnValue(true); // default: every existing test dials as if within the legal window
+  mockEnv.MEDIA_STREAM_ENABLED = false;
 });
 
 describe("campaignService", () => {
@@ -135,6 +139,7 @@ describe("campaignService", () => {
         leadId: "lead_1",
         campaignId: "camp_1",
         lead: { phoneNumber: "+15551234567" },
+        campaign: { streamingEnabled: false },
       });
       placeOutboundCall.mockResolvedValue({ outcome: "dialed", callId: "call_1" });
       campaignContactCount.mockResolvedValue(0);
@@ -150,7 +155,10 @@ describe("campaignService", () => {
         where: { id: "camp_1", status: "RUNNING" },
         data: { status: "COMPLETED" },
       });
-      expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", "lead_1", { requireConsent: true });
+      expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", "lead_1", {
+        requireConsent: true,
+        streamingEnabled: false,
+      });
     });
 
     it("does not complete the campaign while PENDING contacts remain", async () => {
@@ -160,6 +168,7 @@ describe("campaignService", () => {
         leadId: "lead_1",
         campaignId: "camp_1",
         lead: { phoneNumber: "+15551234567" },
+        campaign: { streamingEnabled: false },
       });
       placeOutboundCall.mockResolvedValue({ outcome: "dialed", callId: "call_1" });
       campaignContactCount.mockResolvedValue(3);
@@ -201,6 +210,7 @@ describe("campaignService", () => {
         leadId: "lead_1",
         campaignId: "camp_1",
         lead: { phoneNumber: "+15551234567" },
+        campaign: { streamingEnabled: false },
       });
       placeOutboundCall.mockResolvedValue({ outcome: "dialed", callId: "call_1" });
       campaignContactCount.mockResolvedValue(0);
@@ -217,6 +227,7 @@ describe("campaignService", () => {
         leadId: "lead_1",
         campaignId: "camp_1",
         lead: { phoneNumber: "+15551234567" },
+        campaign: { streamingEnabled: false },
       });
       placeOutboundCall.mockResolvedValue({ outcome: "failed", error: "boom", callId: "call_1" });
       campaignContactCount.mockResolvedValue(0);
@@ -236,6 +247,7 @@ describe("campaignService", () => {
         leadId: "lead_1",
         campaignId: "camp_1",
         lead: { phoneNumber: "+15551234567" },
+        campaign: { streamingEnabled: false },
       });
       placeOutboundCall.mockResolvedValue({ outcome: "skipped_no_consent" });
       campaignContactCount.mockResolvedValue(0);
@@ -255,6 +267,7 @@ describe("campaignService", () => {
         leadId: "lead_1",
         campaignId: "camp_1",
         lead: { phoneNumber: "+12125551234" },
+        campaign: { streamingEnabled: false },
       });
       isWithinCallingHours.mockReturnValue(false);
       const nextWindow = new Date("2026-01-16T13:00:00Z");
@@ -275,6 +288,7 @@ describe("campaignService", () => {
         leadId: "lead_1",
         campaignId: "camp_1",
         lead: { phoneNumber: "+15551234567" },
+        campaign: { streamingEnabled: false },
       });
       placeOutboundCall.mockResolvedValue({ outcome: "skipped_dnc" });
       campaignContactCount.mockResolvedValue(0);
@@ -284,6 +298,48 @@ describe("campaignService", () => {
       expect(campaignContactUpdate).toHaveBeenCalledWith({
         where: { id: "cc_1" },
         data: { status: "SKIPPED_DNC" },
+      });
+    });
+
+    it("dials with streamingEnabled: true when the campaign opted in and MEDIA_STREAM_ENABLED is globally on", async () => {
+      mockEnv.MEDIA_STREAM_ENABLED = true;
+      campaignContactUpdateMany.mockResolvedValue({ count: 1 });
+      campaignContactFindUniqueOrThrow.mockResolvedValue({
+        id: "cc_1",
+        leadId: "lead_1",
+        campaignId: "camp_1",
+        lead: { phoneNumber: "+15551234567" },
+        campaign: { streamingEnabled: true },
+      });
+      placeOutboundCall.mockResolvedValue({ outcome: "dialed", callId: "call_1" });
+      campaignContactCount.mockResolvedValue(0);
+
+      await processCampaignContactJob("cc_1");
+
+      expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", "lead_1", {
+        requireConsent: true,
+        streamingEnabled: true,
+      });
+    });
+
+    it("does not dial with streaming when the campaign opted in but MEDIA_STREAM_ENABLED is globally off", async () => {
+      mockEnv.MEDIA_STREAM_ENABLED = false;
+      campaignContactUpdateMany.mockResolvedValue({ count: 1 });
+      campaignContactFindUniqueOrThrow.mockResolvedValue({
+        id: "cc_1",
+        leadId: "lead_1",
+        campaignId: "camp_1",
+        lead: { phoneNumber: "+15551234567" },
+        campaign: { streamingEnabled: true },
+      });
+      placeOutboundCall.mockResolvedValue({ outcome: "dialed", callId: "call_1" });
+      campaignContactCount.mockResolvedValue(0);
+
+      await processCampaignContactJob("cc_1");
+
+      expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", "lead_1", {
+        requireConsent: true,
+        streamingEnabled: false,
       });
     });
   });
