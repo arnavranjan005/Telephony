@@ -14,10 +14,16 @@ jest.mock("@telephony/domain", () => ({
 
 import request from "supertest";
 import { createApp } from "../../src/app";
+import { OBJECTION_HANDLING_BASELINE } from "../../src/callConversationService";
 
 const app = createApp();
 
 describe("Campaign routes", () => {
+  it("GET /api/campaigns/objection-baseline returns the baseline objection-handling text", async () => {
+    const res = await request(app).get("/api/campaigns/objection-baseline");
+    expect(res.status).toBe(200);
+    expect(res.body.text).toBe(OBJECTION_HANDLING_BASELINE);
+  });
   it("POST /api/campaigns creates a campaign with its contacts", async () => {
     createCampaign.mockResolvedValue({ id: "camp_1", name: "Spring outreach" });
 

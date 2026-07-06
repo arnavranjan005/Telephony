@@ -23,7 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Plus, Play, Pause } from "lucide-react";
+import { Plus, Play, Pause, ChevronDown } from "lucide-react";
 
 export default function CampaignsPage() {
   const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
@@ -149,6 +149,14 @@ function CreateCampaignDialog({
   const [objectionPlaybook, setObjectionPlaybook] = useState("");
   const [contactsText, setContactsText] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [objectionBaseline, setObjectionBaseline] = useState<string | null>(null);
+  const [showBaseline, setShowBaseline] = useState(false);
+
+  useEffect(() => {
+    if (open && objectionBaseline === null) {
+      apiClient.getObjectionBaseline().then((data) => setObjectionBaseline(data.text));
+    }
+  }, [open, objectionBaseline]);
 
   async function submit() {
     const contacts = contactsText
@@ -210,12 +218,29 @@ function CreateCampaignDialog({
             <Textarea value={script} onChange={(e) => setScript(e.target.value)} rows={3} />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label>Objection playbook (optional)</Label>
+            <div className="flex items-center justify-between">
+              <Label>Objection playbook (optional)</Label>
+              {objectionBaseline && (
+                <button
+                  type="button"
+                  onClick={() => setShowBaseline((v) => !v)}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  What's handled by default
+                  <ChevronDown className={`size-3 transition-transform ${showBaseline ? "rotate-180" : ""}`} />
+                </button>
+              )}
+            </div>
+            {showBaseline && objectionBaseline && (
+              <div className="rounded-md border bg-muted/50 p-3 text-xs text-muted-foreground whitespace-pre-wrap">
+                {objectionBaseline}
+              </div>
+            )}
             <Textarea
               value={objectionPlaybook}
               onChange={(e) => setObjectionPlaybook(e.target.value)}
               rows={3}
-              placeholder={'e.g. "If price is the objection, mention the 3-installment plan"'}
+              placeholder={'Only add campaign-specific detail on top of the default above, e.g. "If price is the objection, mention the 3-installment plan"'}
             />
           </div>
           <div className="flex flex-col gap-1.5">

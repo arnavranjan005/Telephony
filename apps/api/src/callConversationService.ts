@@ -11,6 +11,21 @@ import { buildSentimentTools } from "./ai/tools/sentimentTools";
 import { callEventBus } from "./sse/eventBus";
 import { ROLE_TO_DB, loadHistory } from "./conversationHistory";
 
+/**
+ * The baseline objection-handling behavior every call gets by default, with
+ * no per-campaign authoring required. Exported on its own (in addition to
+ * being folded into SYSTEM_PROMPT below) so the admin panel can show it to
+ * whoever is writing a campaign's optional `objectionPlaybook` - so they can
+ * see what's already covered and only add campaign-specific detail on top,
+ * via GET /api/campaigns/objection-baseline (campaignController.ts).
+ */
+export const OBJECTION_HANDLING_BASELINE = `When the caller raises a concern or objection (price, timing, trust, "not interested," etc.),
+acknowledge it briefly and address it honestly - never invent pricing, features, or guarantees you
+don't actually have; offer to have someone follow up rather than guessing. Before deciding how hard to
+push back, weigh it against the caller's most recently recorded sentiment: if it's neutral or only
+mildly negative, a genuine rebuttal is appropriate; if it's very_negative, drop the rebuttal entirely -
+just acknowledge their frustration and offer to wrap up the call gracefully or follow up later instead.`;
+
 export const SYSTEM_PROMPT = `You are a friendly, professional voice sales/support agent speaking on a live phone call.
 Keep responses short and conversational (1-3 sentences), as they will be spoken aloud via text-to-speech.
 Use the available tools to check calendar availability, book appointments, and update lead status when appropriate.
@@ -22,12 +37,7 @@ schedule_appointment or schedule_followup - don't leave conflicting actions in p
 Whenever you notice a shift in the caller's tone or mood (e.g. growing frustrated, upset, or notably
 pleased), call record_sentiment to note it - every time it changes, not just once - and let it guide
 how you say your next line.
-When the caller raises a concern or objection (price, timing, trust, "not interested," etc.),
-acknowledge it briefly and address it honestly - never invent pricing, features, or guarantees you
-don't actually have; offer to have someone follow up rather than guessing. Before deciding how hard to
-push back, weigh it against the caller's most recently recorded sentiment: if it's neutral or only
-mildly negative, a genuine rebuttal is appropriate; if it's very_negative, drop the rebuttal entirely -
-just acknowledge their frustration and offer to wrap up the call gracefully or follow up later instead.`;
+${OBJECTION_HANDLING_BASELINE}`;
 
 interface CampaignPromptSource {
   script?: string | null;

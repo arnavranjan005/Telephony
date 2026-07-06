@@ -18,7 +18,13 @@ jest.mock("./conversationHistory", () => ({
   ROLE_TO_DB: { user: "USER", assistant: "ASSISTANT", system: "SYSTEM", tool: "TOOL" },
 }));
 
-import { buildSystemPrompt, SYSTEM_PROMPT } from "./callConversationService";
+import { buildSystemPrompt, OBJECTION_HANDLING_BASELINE, SYSTEM_PROMPT } from "./callConversationService";
+
+describe("OBJECTION_HANDLING_BASELINE", () => {
+  it("is embedded in SYSTEM_PROMPT so every call gets it by default", () => {
+    expect(SYSTEM_PROMPT).toContain(OBJECTION_HANDLING_BASELINE);
+  });
+});
 
 describe("buildSystemPrompt", () => {
   it("returns the baseline prompt when there's no campaign", () => {
