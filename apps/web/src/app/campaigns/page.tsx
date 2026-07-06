@@ -23,7 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Plus, Play, Pause, ChevronDown } from "lucide-react";
+import { Plus, Play, Pause } from "lucide-react";
 
 export default function CampaignsPage() {
   const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
@@ -150,13 +150,10 @@ function CreateCampaignDialog({
   const [contactsText, setContactsText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [objectionBaseline, setObjectionBaseline] = useState<string | null>(null);
-  const [showBaseline, setShowBaseline] = useState(false);
 
   useEffect(() => {
-    if (open && objectionBaseline === null) {
-      apiClient.getObjectionBaseline().then((data) => setObjectionBaseline(data.text));
-    }
-  }, [open, objectionBaseline]);
+    apiClient.getObjectionBaseline().then((data) => setObjectionBaseline(data.text));
+  }, []);
 
   async function submit() {
     const contacts = contactsText
@@ -218,23 +215,12 @@ function CreateCampaignDialog({
             <Textarea value={script} onChange={(e) => setScript(e.target.value)} rows={3} />
           </div>
           <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between">
-              <Label>Objection playbook (optional)</Label>
-              {objectionBaseline && (
-                <button
-                  type="button"
-                  onClick={() => setShowBaseline((v) => !v)}
-                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                >
-                  What's handled by default
-                  <ChevronDown className={`size-3 transition-transform ${showBaseline ? "rotate-180" : ""}`} />
-                </button>
-              )}
-            </div>
-            {showBaseline && objectionBaseline && (
-              <div className="rounded-md border bg-muted/50 p-3 text-xs text-muted-foreground whitespace-pre-wrap">
-                {objectionBaseline}
-              </div>
+            <Label>Objection playbook (optional)</Label>
+            {objectionBaseline && (
+              <p className="border-l-2 pl-2 text-xs leading-relaxed text-muted-foreground">
+                <span className="font-medium">Handled by default: </span>
+                {objectionBaseline.replace(/\s+/g, " ").trim()}
+              </p>
             )}
             <Textarea
               value={objectionPlaybook}
