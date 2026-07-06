@@ -10,9 +10,15 @@
 // jest.eval.config.js, run via `npm run eval:ai` with a real
 // GOOGLE_AI_API_KEY exported (everything else can keep the dummy values
 // tests/setupEnv.ts already provides, since no other tool handlers run here).
+//
+// Each case can fire up to two real calls (generateReply, plus a judgeReply
+// call for rubric-graded cases), so the agent is wrapped with withRateLimit
+// to throttle and retry-with-backoff against provider rate limits instead of
+// firing every call back to back.
 import { getAIAgent } from "../agentFactory";
 import { EVAL_CASES } from "./cases";
 import { judgeReply } from "./judge";
+import { withRateLimit } from "./rateLimitedAgent";
 import { ExpectedToolCall } from "./types";
 
 function matchesExpectedArgs(expected: Record<string, unknown>, actual: Record<string, unknown>): boolean {
@@ -30,7 +36,9 @@ function assertExpectedToolCall(expected: ExpectedToolCall, actualToolCalls: { n
 }
 
 describe("AI reply quality evals (real Gemini calls, LLM-as-judge for free text)", () => {
-  const agent = getAIAgent();
+  const agent = withRateLimit(getAIAgent(), {
+    minIntervalMs: process.env.EVAL_AI_MIN_INTERVAL_MS ? Number(process.env.EVAL_AI_MIN_INTERVAL_MS) : undefined,
+  });
 
   it.each(EVAL_CASES)(
     "$name",
@@ -50,7 +58,6 @@ describe("AI reply quality evals (real Gemini calls, LLM-as-judge for free text)
           throw new Error(`LLM judge failed reply "${reply.content}" against rubric: ${verdict.reason}`);
         }
       }
-    },
-    30000
+    }
   );
 });

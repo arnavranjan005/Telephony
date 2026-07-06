@@ -5,7 +5,7 @@ module.exports = {
   roots: ["<rootDir>/src", "<rootDir>/../../__mocks__"],
   testMatch: ["**/*.eval-test.ts"],
   setupFiles: ["<rootDir>/tests/setupEnv.ts"],
-  testTimeout: 60000,
+  testTimeout: 120000,
   moduleNameMapper: {
     "^@telephony/(.*)$": "<rootDir>/../../packages/$1/src/index.ts",
   },

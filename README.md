@@ -603,3 +603,9 @@ the fast/deterministic default suite, so it lives behind its own `*.eval-test.ts
 for the same ESM dynamic-`import()` reason described in the `aiConversation.e2e-test.ts` bullet above —
 this suite calls the real `GoogleAgent`, so unlike that e2e spec it can't sidestep the issue by mocking
 the provider.
+
+A case can fire two real calls (`generateReply`, plus a `judgeReply` call for rubric-graded cases), so
+`aiReplyQuality.eval-test.ts` wraps the agent with `rateLimitedAgent.ts`'s `withRateLimit` rather than
+firing every call back to back: it enforces a minimum gap between calls (`EVAL_AI_MIN_INTERVAL_MS`,
+default 4s — roughly a 15 req/min free-tier cap) and retries a 429 after the provider's own suggested
+`RetryInfo.retryDelay`, falling back to exponential backoff if that's absent.
