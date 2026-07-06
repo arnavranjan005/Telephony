@@ -126,6 +126,37 @@ describe("campaignService", () => {
       });
     });
 
+    it("persists an objectionPlaybook when provided", async () => {
+      campaignCreate.mockResolvedValue({ id: "camp_1" });
+      campaignFindUnique.mockResolvedValue({ id: "camp_1", contacts: [] });
+
+      await createCampaign({
+        name: "Spring outreach",
+        objectionPlaybook: "If price is the objection, mention the 3-installment plan",
+        contacts: [],
+      });
+
+      expect(campaignCreate).toHaveBeenCalledWith({
+        data: {
+          name: "Spring outreach",
+          script: undefined,
+          objectionPlaybook: "If price is the objection, mention the 3-installment plan",
+          streamingEnabled: true,
+        },
+      });
+    });
+
+    it("leaves objectionPlaybook undefined when not provided", async () => {
+      campaignCreate.mockResolvedValue({ id: "camp_1" });
+      campaignFindUnique.mockResolvedValue({ id: "camp_1", contacts: [] });
+
+      await createCampaign({ name: "Spring outreach", contacts: [] });
+
+      expect(campaignCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ objectionPlaybook: undefined }),
+      });
+    });
+
     it("uses the given leadId directly without upserting a lead", async () => {
       campaignCreate.mockResolvedValue({ id: "camp_1" });
       campaignContactCreate.mockResolvedValue({});

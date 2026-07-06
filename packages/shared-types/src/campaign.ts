@@ -7,6 +7,7 @@ export interface Campaign {
   id: string;
   name: string;
   script: string | null;
+  objectionPlaybook: string | null;
   status: CampaignStatus;
   fromNumber: string | null;
   streamingEnabled: boolean;
@@ -38,6 +39,7 @@ export interface CreateCampaignContactInput {
 export interface CreateCampaignInput {
   name: string;
   script?: string;
+  objectionPlaybook?: string;
   streamingEnabled?: boolean;
   contacts: CreateCampaignContactInput[];
 }

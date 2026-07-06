@@ -8,6 +8,7 @@ import {
   startCampaign,
 } from "@telephony/domain";
 import { callEventBus } from "../sse/eventBus";
+import { OBJECTION_HANDLING_BASELINE } from "../callConversationService";
 
 const contactSchema = z.object({
   leadId: z.string().optional(),
@@ -19,6 +20,7 @@ const contactSchema = z.object({
 const createCampaignSchema = z.object({
   name: z.string().min(1),
   script: z.string().optional(),
+  objectionPlaybook: z.string().optional(),
   streamingEnabled: z.boolean().optional(),
   contacts: z.array(contactSchema).default([]),
 });
@@ -30,6 +32,16 @@ export async function postCampaign(req: Request, res: Response) {
   const campaign = await createCampaign(parsed.data);
   callEventBus.publishGlobal("campaign.created", { campaign });
   res.status(201).json({ campaign });
+}
+
+/**
+ * Read-only reference for whoever is writing a campaign's optional
+ * `objectionPlaybook` - lets the admin panel show what's already handled by
+ * default so they only add campaign-specific detail, instead of guessing at
+ * or duplicating it.
+ */
+export async function getObjectionBaseline(_req: Request, res: Response) {
+  res.json({ text: OBJECTION_HANDLING_BASELINE });
 }
 
 export async function getCampaigns(_req: Request, res: Response) {

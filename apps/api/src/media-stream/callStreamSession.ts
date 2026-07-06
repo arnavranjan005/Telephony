@@ -6,8 +6,9 @@ import { buildCalendarTools } from "../ai/tools/calendarTools";
 import { buildLeadTools } from "../ai/tools/leadTools";
 import { buildComplianceTools } from "../ai/tools/complianceTools";
 import { buildFollowUpTools } from "../ai/tools/followUpTools";
+import { buildSentimentTools } from "../ai/tools/sentimentTools";
 import { loadHistory, ROLE_TO_DB } from "../conversationHistory";
-import { SYSTEM_PROMPT } from "../callConversationService";
+import { SYSTEM_PROMPT, buildSystemPrompt } from "../callConversationService";
 import { callEventBus } from "../sse/eventBus";
 import { DeepgramStreamClient, DeepgramTranscriptEvent } from "./deepgramClient";
 import { sendSpeech, TtsSendHandle } from "./ttsSender";
@@ -65,9 +66,9 @@ export class CallStreamSession {
         callId: this.options.callId,
         streamingEnabled: call?.streamingEnabled,
       }),
+      ...buildSentimentTools(),
     ];
-    const campaignScript = call?.campaignContact?.campaign.script;
-    this.systemPrompt = campaignScript ? `${SYSTEM_PROMPT}\n\nCampaign script/guidance:\n${campaignScript}` : SYSTEM_PROMPT;
+    this.systemPrompt = buildSystemPrompt(call?.campaignContact?.campaign);
 
     this.stt = new DeepgramStreamClient();
     this.stt.on("transcript", (event: DeepgramTranscriptEvent) => this.handleTranscript(event));

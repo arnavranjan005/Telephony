@@ -15,7 +15,12 @@ export function buildComplianceTools(context: ComplianceToolContext): ToolDefini
   const addToDncTool: ToolDefinition = {
     name: "add_to_dnc",
     description:
-      "Add the current caller's phone number to the Do-Not-Call list. Call this immediately whenever the caller asks to stop being contacted, to be removed from the list, or to opt out.",
+      "Add the current caller's phone number to the Do-Not-Call list. Call this immediately whenever the caller " +
+      "expresses - explicitly or implicitly - that they don't want to be contacted again: a direct request " +
+      "('stop calling me', 'take me off your list', 'remove my number'), or an implicit signal with the same " +
+      "intent even without those exact words ('just leave me alone', 'I don't want to hear from you again', " +
+      "'quit bothering me'). Err on the side of calling this whenever the caller's intent to not be contacted " +
+      "again is reasonably clear, even if they don't use a canonical opt-out phrase.",
     parameters: {
       type: "object",
       properties: {

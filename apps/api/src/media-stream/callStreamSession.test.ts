@@ -25,13 +25,22 @@ jest.mock("../ai/tools/calendarTools", () => ({ buildCalendarTools: () => [] }))
 jest.mock("../ai/tools/leadTools", () => ({ buildLeadTools: () => [] }));
 jest.mock("../ai/tools/complianceTools", () => ({ buildComplianceTools: () => [] }));
 jest.mock("../ai/tools/followUpTools", () => ({ buildFollowUpTools: () => [] }));
+jest.mock("../ai/tools/sentimentTools", () => ({ buildSentimentTools: () => [] }));
 
 jest.mock("../conversationHistory", () => ({
   loadHistory: (...args: unknown[]) => loadHistory(...args),
   ROLE_TO_DB: { user: "USER", assistant: "ASSISTANT", system: "SYSTEM", tool: "TOOL" },
 }));
 
-jest.mock("../callConversationService", () => ({ SYSTEM_PROMPT: "you are a test agent" }));
+jest.mock("../callConversationService", () => ({
+  SYSTEM_PROMPT: "you are a test agent",
+  buildSystemPrompt: (campaign?: { script?: string | null; objectionPlaybook?: string | null } | null) => {
+    const parts = ["you are a test agent"];
+    if (campaign?.script) parts.push(campaign.script);
+    if (campaign?.objectionPlaybook) parts.push(campaign.objectionPlaybook);
+    return parts.join("\n\n");
+  },
+}));
 
 jest.mock("../sse/eventBus", () => ({
   callEventBus: { publish: (...args: unknown[]) => callEventBusPublish(...args) },

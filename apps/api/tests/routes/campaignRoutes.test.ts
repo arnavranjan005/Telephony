@@ -14,10 +14,16 @@ jest.mock("@telephony/domain", () => ({
 
 import request from "supertest";
 import { createApp } from "../../src/app";
+import { OBJECTION_HANDLING_BASELINE } from "../../src/callConversationService";
 
 const app = createApp();
 
 describe("Campaign routes", () => {
+  it("GET /api/campaigns/objection-baseline returns the baseline objection-handling text", async () => {
+    const res = await request(app).get("/api/campaigns/objection-baseline");
+    expect(res.status).toBe(200);
+    expect(res.body.text).toBe(OBJECTION_HANDLING_BASELINE);
+  });
   it("POST /api/campaigns creates a campaign with its contacts", async () => {
     createCampaign.mockResolvedValue({ id: "camp_1", name: "Spring outreach" });
 
@@ -32,6 +38,22 @@ describe("Campaign routes", () => {
       script: "Ask about renewal",
       contacts: [{ phoneNumber: "+15551234567" }],
     });
+  });
+
+  it("POST /api/campaigns passes objectionPlaybook through when provided", async () => {
+    createCampaign.mockResolvedValue({ id: "camp_1", name: "Spring outreach" });
+
+    await request(app)
+      .post("/api/campaigns")
+      .send({
+        name: "Spring outreach",
+        objectionPlaybook: "If price is the objection, mention the 3-installment plan",
+        contacts: [],
+      });
+
+    expect(createCampaign).toHaveBeenCalledWith(
+      expect.objectContaining({ objectionPlaybook: "If price is the objection, mention the 3-installment plan" })
+    );
   });
 
   it("POST /api/campaigns passes streamingEnabled through when the caller opts in", async () => {
