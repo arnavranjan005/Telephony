@@ -456,6 +456,10 @@ section above. What's genuinely still missing:
 - **Inbound call routing by intent** - every inbound call is answered and handled end-to-end by the
   same AI agent; there's no transfer/escalation to a human or routing to different
   departments/queues based on detected intent.
+- **Campaign contact management is basic** - the "New campaign" form (`apps/web/src/app/campaigns/page.tsx`)
+  takes contacts as one per line in a plain textarea, with no CSV/file upload for a large list. There's
+  also no way to add contacts to an existing campaign - `POST /api/campaigns` only accepts a contact list
+  at creation time (`campaignRoutes.ts` has no add-contacts route), so a second batch needs a new campaign.
 - **Paralinguistic voice realism** - no custom fillers ("um," "ah," breathing pauses) or human-like
   pacing control; voice quality is whatever ElevenLabs' endpoint and `voice_settings` return.
 - **Preferred tech stack (Siphon/Dograh) not used** - both are orchestration/self-hosting layers, not
