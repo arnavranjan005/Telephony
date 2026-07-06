@@ -438,10 +438,16 @@ section above. What's genuinely still missing:
   departments/queues based on detected intent.
 - **Paralinguistic voice realism** - no custom fillers ("um," "ah," breathing pauses) or human-like
   pacing control; voice quality is whatever ElevenLabs' endpoint and `voice_settings` return.
-- **Preferred tech stack** - the requirements doc asks for Siphon/Dograh (open-source, self-hosted,
-  no recurring platform fees). This app is instead built on Telnyx, ElevenLabs, Deepgram, and Google
-  Gemini - all paid, metered third-party APIs - so the "no recurring subscription fees" non-functional
-  requirement isn't met as specified, even though the functional behavior is equivalent.
+- **Preferred tech stack (Siphon/Dograh) not used** - both are orchestration/self-hosting layers, not
+  replacements for STT/TTS/LLM/telephony themselves (they let you bring your own provider, or swap to
+  fully self-hosted open models, e.g. local Whisper/a local LLM/open TTS). This app already avoids the
+  Vapi/n8n markup layer the client explicitly ruled out - it talks to Telnyx/Deepgram/ElevenLabs/Gemini
+  directly, no platform fee stacked on top. What it's missing relative to Siphon/Dograh specifically:
+  no provider abstraction/BYOK config to swap in cheaper or fully self-hosted models (Deepgram/
+  ElevenLabs/Gemini are hardcoded, so there's no path to near-zero marginal cost the way a self-hosted
+  Whisper/local-LLM/open-TTS stack would give), Dograh's visual workflow builder, and MCP-native tool
+  calling. Telephony-carrier minutes (Telnyx or any equivalent) and LLM/STT/TTS usage are real,
+  unavoidable costs regardless of which of these tools sits on top - no open-source layer removes them.
 
 Real-time bidirectional media streaming with barge-in is now implemented and is the default calling
 path (see the section above), and TTS synthesis itself now streams (ElevenLabs' `/stream` endpoint,
