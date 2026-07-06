@@ -47,7 +47,7 @@ const envSchema = z.object({
 
   AI_PROVIDER: z.enum(["google"]).default("google"),
   GOOGLE_AI_API_KEY: z.string().optional(),
-  GOOGLE_AI_MODEL: z.string().default("gemini-2.0-flash"),
+  GOOGLE_AI_MODEL: z.string().default("gemini-2.5-flash"),
 
   // Bidirectional media streaming (real-time barge-in) - the default calling
   // path. Provider keys below are required unless this is explicitly turned
