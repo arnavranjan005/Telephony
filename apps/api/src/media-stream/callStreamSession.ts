@@ -6,6 +6,7 @@ import { buildCalendarTools } from "../ai/tools/calendarTools";
 import { buildLeadTools } from "../ai/tools/leadTools";
 import { buildComplianceTools } from "../ai/tools/complianceTools";
 import { buildFollowUpTools } from "../ai/tools/followUpTools";
+import { buildSentimentTools } from "../ai/tools/sentimentTools";
 import { loadHistory, ROLE_TO_DB } from "../conversationHistory";
 import { SYSTEM_PROMPT } from "../callConversationService";
 import { callEventBus } from "../sse/eventBus";
@@ -65,6 +66,7 @@ export class CallStreamSession {
         callId: this.options.callId,
         streamingEnabled: call?.streamingEnabled,
       }),
+      ...buildSentimentTools(),
     ];
     const campaignScript = call?.campaignContact?.campaign.script;
     this.systemPrompt = campaignScript ? `${SYSTEM_PROMPT}\n\nCampaign script/guidance:\n${campaignScript}` : SYSTEM_PROMPT;

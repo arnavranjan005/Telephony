@@ -7,6 +7,7 @@ import { buildCalendarTools } from "./ai/tools/calendarTools";
 import { buildLeadTools } from "./ai/tools/leadTools";
 import { buildComplianceTools } from "./ai/tools/complianceTools";
 import { buildFollowUpTools } from "./ai/tools/followUpTools";
+import { buildSentimentTools } from "./ai/tools/sentimentTools";
 import { callEventBus } from "./sse/eventBus";
 import { ROLE_TO_DB, loadHistory } from "./conversationHistory";
 
@@ -17,7 +18,10 @@ Never invent appointment times without checking availability first.
 If the caller changes their mind about something you already acted on (e.g. they ask for a different
 time after you've already booked an appointment or scheduled a callback), cancel the earlier action
 first with cancel_appointment or cancel_followup before completing the new request with
-schedule_appointment or schedule_followup - don't leave conflicting actions in place.`;
+schedule_appointment or schedule_followup - don't leave conflicting actions in place.
+Whenever you notice a shift in the caller's tone or mood (e.g. growing frustrated, upset, or notably
+pleased), call record_sentiment to note it - every time it changes, not just once - and let it guide
+how you say your next line.`;
 
 async function persistNewMessages(callId: string, before: number, all: AgentMessage[]) {
   const newMessages = all.slice(before);
@@ -67,6 +71,7 @@ export async function handleCallerUtterance(
       callId,
       streamingEnabled: call?.streamingEnabled,
     }),
+    ...buildSentimentTools(),
   ];
 
   const campaignScript = call?.campaignContact?.campaign.script;

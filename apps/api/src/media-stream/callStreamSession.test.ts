@@ -25,6 +25,7 @@ jest.mock("../ai/tools/calendarTools", () => ({ buildCalendarTools: () => [] }))
 jest.mock("../ai/tools/leadTools", () => ({ buildLeadTools: () => [] }));
 jest.mock("../ai/tools/complianceTools", () => ({ buildComplianceTools: () => [] }));
 jest.mock("../ai/tools/followUpTools", () => ({ buildFollowUpTools: () => [] }));
+jest.mock("../ai/tools/sentimentTools", () => ({ buildSentimentTools: () => [] }));
 
 jest.mock("../conversationHistory", () => ({
   loadHistory: (...args: unknown[]) => loadHistory(...args),

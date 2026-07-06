@@ -426,9 +426,19 @@ The full requirements doc describes a much larger system. Live call monitoring a
 view for appointments (both previously listed here) are now implemented - see the "Admin panel"
 section above. What's genuinely still missing:
 
-- **Sentiment analysis / retention ("save") logic** - no mid-call sentiment detection, so there's no
-  automatic trigger for retention logic or for adding a caller to the DNC list based on negative
-  sentiment (today `add_to_dnc` only fires when the caller explicitly asks to stop being contacted).
+- **Sentiment analysis / retention ("save") logic** - partially addressed: `record_sentiment`
+  (`apps/api/src/ai/tools/sentimentTools.ts`) lets the agent log a tone/mood shift (positive/neutral/
+  negative/very_negative) as it notices one during the call, and the tool result folds back into the
+  same turn's conversation history so the agent's own next reply is already conditioned on it (e.g.
+  softening tone after a negative reading) - no separate classifier call, no added latency. The
+  system prompt instructs the agent to call it every time it notices a shift, not just once. What's
+  still missing: this is discretionary (the agent decides when to call it, same as `update_lead_status`
+  - there's no guaranteed-detection backstop independent of the LLM's own judgment), it isn't persisted
+  anywhere beyond the conversation transcript (no `Call.sentiment` field, no dashboard surfacing), and
+  it deliberately does **not** feed into `add_to_dnc` automatically - inferred mood alone shouldn't
+  trigger an opt-out; `add_to_dnc`'s own trigger condition was separately widened to catch an
+  *implicit* opt-out ("just leave me alone," not just "stop calling me"), which is the more accurate
+  fix for that gap than wiring mood into it.
 - **Objection handling / branching dynamic scripting** - the AI adapts within a conversation (via the
   LLM itself plus the per-campaign script appended to its system prompt), but there's no dedicated
   objection-detection logic or a scripted decision-tree/branching engine - it's one flat system
