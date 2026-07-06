@@ -10,8 +10,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isRateLimitError(error: unknown): boolean {
-  return error instanceof Error && /got status:\s*429/.test(error.message);
+// 429 is quota/rate-limit (retry after RetryInfo.retryDelay, parsed below).
+// 503 is the model being transiently overloaded ("high demand" - no
+// RetryInfo, falls back to exponential backoff) - both are worth retrying,
+// unlike a 400/permission error which would just repeat.
+function isRetryableError(error: unknown): boolean {
+  return error instanceof Error && /got status:\s*(429|503)/.test(error.message);
 }
 
 // @google/genai doesn't expose a structured status/retry-after field - it
@@ -36,7 +40,7 @@ function parseSuggestedRetryDelayMs(message: string): number | null {
 /**
  * Wraps a real AIAgent so a run that fires several real API calls back to
  * back doesn't hammer the provider: enforces a minimum gap between calls,
- * and on a 429 retries after the provider's own suggested delay (falling
+ * and on a 429/503 retries after the provider's own suggested delay (falling
  * back to exponential backoff off minIntervalMs if none is given).
  */
 export function withRateLimit(
@@ -59,7 +63,7 @@ export function withRateLimit(
       try {
         return await agent.generateReply(messages, tools, systemPrompt, signal);
       } catch (error) {
-        if (attempt >= maxRetries || !isRateLimitError(error)) throw error;
+        if (attempt >= maxRetries || !isRetryableError(error)) throw error;
         const delay = (error instanceof Error && parseSuggestedRetryDelayMs(error.message)) || minIntervalMs * 2 ** attempt;
         await sleep(delay);
         lastCallAt = Date.now();
