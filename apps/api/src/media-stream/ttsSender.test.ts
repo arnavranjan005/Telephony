@@ -108,7 +108,7 @@ describe("sendSpeech", () => {
 
   it("stops sending further frames and aborts the request once cancel() is called", async () => {
     const audio = Buffer.alloc(320 * 5);
-    jest.spyOn(global, "fetch").mockResolvedValue(mockStreamingResponse([audio]));
+    const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(mockStreamingResponse([audio]));
 
     const sendFrame = jest.fn();
     const handle = sendSpeech("a reply that gets interrupted", sendFrame);
@@ -116,7 +116,12 @@ describe("sendSpeech", () => {
     await jest.advanceTimersByTimeAsync(0);
     expect(sendFrame).toHaveBeenCalledTimes(1);
 
+    const signal = fetchSpy.mock.calls[0][1]?.signal as AbortSignal;
+    expect(signal.aborted).toBe(false);
+
     handle.cancel();
+    expect(signal.aborted).toBe(true);
+
     await jest.advanceTimersByTimeAsync(100);
     await handle.done;
 
