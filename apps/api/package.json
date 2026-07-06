@@ -8,11 +8,12 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "test": "jest"
+    "test": "jest",
+    "eval:ai": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.eval.config.js"
   },
   "dependencies": {
     "@deepgram/sdk": "^5.5.0",
-    "@google/genai": "^0.15.0",
+    "@google/genai": "^2.10.0",
     "@telephony/config": "*",
     "@telephony/database": "*",
     "@telephony/domain": "*",

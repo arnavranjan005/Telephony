@@ -76,7 +76,10 @@ function messagesToContents(messages: AgentMessage[]): Content[] {
       const parts: Part[] = [];
       if (message.content) parts.push({ text: message.content });
       if (message.toolName) {
-        parts.push({ functionCall: { name: message.toolName, args: message.toolArgs ?? {} } });
+        parts.push({
+          functionCall: { name: message.toolName, args: message.toolArgs ?? {} },
+          thoughtSignature: message.thoughtSignature,
+        });
       }
       contents.push({ role: "model", parts });
     } else if (message.role === "tool") {
@@ -143,12 +146,18 @@ export class GoogleAgent implements AIAgent {
       },
     });
 
-    const functionCalls = response.functionCalls ?? [];
-    const toolCalls: ToolCallRequest[] = functionCalls.map((call, index) => ({
-      id: call.id ?? `${call.name}-${index}`,
-      name: call.name ?? "",
-      args: (call.args ?? {}) as Record<string, unknown>,
-    }));
+    // Not response.functionCalls (the SDK's own convenience getter) - it maps
+    // each part down to just the bare FunctionCall, dropping the sibling
+    // thoughtSignature field this needs to read.
+    const responseParts = response.candidates?.[0]?.content?.parts ?? [];
+    const toolCalls: ToolCallRequest[] = responseParts
+      .filter((part) => part.functionCall !== undefined)
+      .map((part, index) => ({
+        id: part.functionCall?.id ?? `${part.functionCall?.name}-${index}`,
+        name: part.functionCall?.name ?? "",
+        args: (part.functionCall?.args ?? {}) as Record<string, unknown>,
+        thoughtSignature: part.thoughtSignature,
+      }));
 
     return {
       content: response.text ?? null,

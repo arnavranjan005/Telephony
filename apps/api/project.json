@@ -17,6 +17,10 @@
       "executor": "nx:run-commands",
       "options": { "command": "npm run test", "cwd": "apps/api" }
     },
+    "eval:ai": {
+      "executor": "nx:run-commands",
+      "options": { "command": "npm run eval:ai", "cwd": "apps/api" }
+    },
     "dev": {
       "executor": "nx:run-commands",
       "options": { "command": "npm run dev", "cwd": "apps/api" }

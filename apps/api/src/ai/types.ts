@@ -6,6 +6,14 @@ export interface AgentMessage {
   toolName?: string;
   toolArgs?: Record<string, unknown>;
   toolCallId?: string;
+  /**
+   * Gemini 3+ "thinking" models attach this to a function-call response and
+   * require it to be replayed verbatim on that same call's turn in the next
+   * request, or generateContent rejects it with a 400. Providers/models that
+   * don't produce one (everything pre-Gemini-3) just never set this - it's
+   * inert for them.
+   */
+  thoughtSignature?: string;
 }
 
 export interface ToolParameterSchema {
@@ -33,6 +41,8 @@ export interface ToolCallRequest {
   id: string;
   name: string;
   args: Record<string, unknown>;
+  /** See AgentMessage.thoughtSignature. */
+  thoughtSignature?: string;
 }
 
 export interface AgentReply {
