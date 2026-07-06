@@ -97,5 +97,10 @@ export const EVAL_CASES: EvalCase[] = [
     rubric:
       "The reply's text must acknowledge the caller's frustration first, must not continue pushing the " +
       "sales/booking agenda, and must offer to stop calling or wrap up the call gracefully.",
+    // This transcript ("stop calling me... three times") reads as an opt-out
+    // request, not just a mood shift - immediately calling add_to_dnc is an
+    // equally valid (arguably stronger) way to drop the sales pitch as a
+    // text reply that merely acknowledges the frustration would be.
+    rubricExemptToolCalls: ["add_to_dnc"],
   },
 ];

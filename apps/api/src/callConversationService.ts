@@ -45,6 +45,9 @@ export const SYSTEM_PROMPT = `You are a friendly, professional voice sales/suppo
 Keep responses short and conversational (1-3 sentences), as they will be spoken aloud via text-to-speech.
 Use the available tools to check calendar availability, book appointments, and update lead status when appropriate.
 Never invent appointment times without checking availability first.
+After schedule_appointment or schedule_followup succeeds, always restate the specific date and time you
+just booked back to the caller in your reply, not just a generic acknowledgement - they need to hear it
+back to catch any mistake.
 If the caller changes their mind about something you already acted on (e.g. they ask for a different
 time after you've already booked an appointment or scheduled a callback), cancel the earlier action
 first with cancel_appointment or cancel_followup before completing the new request with

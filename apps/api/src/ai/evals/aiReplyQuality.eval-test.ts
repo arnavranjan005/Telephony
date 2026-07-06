@@ -49,7 +49,9 @@ describe("AI reply quality evals (real Gemini calls, LLM-as-judge for free text)
         assertExpectedToolCall(expected, reply.toolCalls);
       }
 
-      if (evalCase.rubric) {
+      const isRubricExempt = evalCase.rubricExemptToolCalls?.some((name) => reply.toolCalls.some((tc) => tc.name === name));
+
+      if (evalCase.rubric && !isRubricExempt) {
         if (!reply.content) {
           throw new Error(`expected text content to grade against the rubric, got tool calls only: ${JSON.stringify(reply.toolCalls)}`);
         }

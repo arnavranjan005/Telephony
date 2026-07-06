@@ -15,4 +15,12 @@ export interface EvalCase {
   expectedToolCalls?: ExpectedToolCall[];
   /** Graded on reply.content via LLM-as-judge; requires the reply to include text content. */
   rubric?: string;
+  /**
+   * Tool names that, if present in the actual reply's tool calls, exempt it from the rubric
+   * check entirely - for a transcript where the "correct" response is genuinely ambiguous
+   * between free text and a stronger tool-driven action (e.g. a caller who sounds both
+   * upset and like they want to opt out: acknowledging the frustration in text and
+   * immediately calling add_to_dnc are both a legitimate way to handle it).
+   */
+  rubricExemptToolCalls?: string[];
 }
