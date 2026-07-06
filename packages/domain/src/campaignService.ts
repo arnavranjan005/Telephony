@@ -14,6 +14,12 @@ export interface CampaignContactInput {
 export interface CreateCampaignInput {
   name: string;
   script?: string;
+  /** Product/offer-specific rebuttals for this campaign (e.g. "if price is
+   * the objection, mention the 3-installment plan") - appended to the AI's
+   * system prompt alongside `script`. Optional: the baseline system prompt
+   * already handles objections generically, this only adds campaign-specific
+   * factual detail on top. */
+  objectionPlaybook?: string;
   /** Every dial this campaign makes uses real-time media streaming (barge-in)
    * by default - see outboundDialService.ts's PlaceOutboundCallOptions. Pass
    * `false` to opt this campaign out. Still gated by the global
@@ -31,7 +37,12 @@ export interface CreateCampaignInput {
 export async function createCampaign(input: CreateCampaignInput) {
   const campaign = await prisma.$transaction(async (tx) => {
     const created = await tx.campaign.create({
-      data: { name: input.name, script: input.script, streamingEnabled: input.streamingEnabled ?? true },
+      data: {
+        name: input.name,
+        script: input.script,
+        objectionPlaybook: input.objectionPlaybook,
+        streamingEnabled: input.streamingEnabled ?? true,
+      },
     });
 
     for (const contact of input.contacts) {

@@ -21,7 +21,31 @@ first with cancel_appointment or cancel_followup before completing the new reque
 schedule_appointment or schedule_followup - don't leave conflicting actions in place.
 Whenever you notice a shift in the caller's tone or mood (e.g. growing frustrated, upset, or notably
 pleased), call record_sentiment to note it - every time it changes, not just once - and let it guide
-how you say your next line.`;
+how you say your next line.
+When the caller raises a concern or objection (price, timing, trust, "not interested," etc.),
+acknowledge it briefly and address it honestly - never invent pricing, features, or guarantees you
+don't actually have; offer to have someone follow up rather than guessing. Before deciding how hard to
+push back, weigh it against the caller's most recently recorded sentiment: if it's neutral or only
+mildly negative, a genuine rebuttal is appropriate; if it's very_negative, drop the rebuttal entirely -
+just acknowledge their frustration and offer to wrap up the call gracefully or follow up later instead.`;
+
+interface CampaignPromptSource {
+  script?: string | null;
+  objectionPlaybook?: string | null;
+}
+
+/**
+ * Layers a campaign's optional script/objection-playbook text on top of the
+ * shared SYSTEM_PROMPT. Both fields are opt-in - a campaign with neither set
+ * falls back to the baseline instructions (including the generic objection
+ * handling above) with no per-campaign authoring required.
+ */
+export function buildSystemPrompt(campaign?: CampaignPromptSource | null): string {
+  const parts = [SYSTEM_PROMPT];
+  if (campaign?.script) parts.push(`Campaign script/guidance:\n${campaign.script}`);
+  if (campaign?.objectionPlaybook) parts.push(`Campaign objection playbook:\n${campaign.objectionPlaybook}`);
+  return parts.join("\n\n");
+}
 
 async function persistNewMessages(callId: string, before: number, all: AgentMessage[]) {
   const newMessages = all.slice(before);
@@ -74,8 +98,7 @@ export async function handleCallerUtterance(
     ...buildSentimentTools(),
   ];
 
-  const campaignScript = call?.campaignContact?.campaign.script;
-  const systemPrompt = campaignScript ? `${SYSTEM_PROMPT}\n\nCampaign script/guidance:\n${campaignScript}` : SYSTEM_PROMPT;
+  const systemPrompt = buildSystemPrompt(call?.campaignContact?.campaign);
 
   const { history: updatedHistory, finalReply } = await runConversationTurn(agent, history, tools, systemPrompt);
 

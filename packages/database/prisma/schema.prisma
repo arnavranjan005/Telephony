@@ -179,6 +179,7 @@ model Campaign {
   id               String         @id @default(cuid())
   name             String
   script           String?
+  objectionPlaybook String?
   status           CampaignStatus @default(DRAFT)
   fromNumber       String?
   streamingEnabled Boolean        @default(true)

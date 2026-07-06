@@ -19,6 +19,7 @@ const contactSchema = z.object({
 const createCampaignSchema = z.object({
   name: z.string().min(1),
   script: z.string().optional(),
+  objectionPlaybook: z.string().optional(),
   streamingEnabled: z.boolean().optional(),
   contacts: z.array(contactSchema).default([]),
 });

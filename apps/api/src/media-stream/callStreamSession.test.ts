@@ -32,7 +32,15 @@ jest.mock("../conversationHistory", () => ({
   ROLE_TO_DB: { user: "USER", assistant: "ASSISTANT", system: "SYSTEM", tool: "TOOL" },
 }));
 
-jest.mock("../callConversationService", () => ({ SYSTEM_PROMPT: "you are a test agent" }));
+jest.mock("../callConversationService", () => ({
+  SYSTEM_PROMPT: "you are a test agent",
+  buildSystemPrompt: (campaign?: { script?: string | null; objectionPlaybook?: string | null } | null) => {
+    const parts = ["you are a test agent"];
+    if (campaign?.script) parts.push(campaign.script);
+    if (campaign?.objectionPlaybook) parts.push(campaign.objectionPlaybook);
+    return parts.join("\n\n");
+  },
+}));
 
 jest.mock("../sse/eventBus", () => ({
   callEventBus: { publish: (...args: unknown[]) => callEventBusPublish(...args) },

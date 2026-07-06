@@ -34,6 +34,22 @@ describe("Campaign routes", () => {
     });
   });
 
+  it("POST /api/campaigns passes objectionPlaybook through when provided", async () => {
+    createCampaign.mockResolvedValue({ id: "camp_1", name: "Spring outreach" });
+
+    await request(app)
+      .post("/api/campaigns")
+      .send({
+        name: "Spring outreach",
+        objectionPlaybook: "If price is the objection, mention the 3-installment plan",
+        contacts: [],
+      });
+
+    expect(createCampaign).toHaveBeenCalledWith(
+      expect.objectContaining({ objectionPlaybook: "If price is the objection, mention the 3-installment plan" })
+    );
+  });
+
   it("POST /api/campaigns passes streamingEnabled through when the caller opts in", async () => {
     createCampaign.mockResolvedValue({ id: "camp_1", name: "Spring outreach" });
 

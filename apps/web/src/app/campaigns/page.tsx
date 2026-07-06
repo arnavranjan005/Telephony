@@ -146,6 +146,7 @@ function CreateCampaignDialog({
 }) {
   const [name, setName] = useState("");
   const [script, setScript] = useState("");
+  const [objectionPlaybook, setObjectionPlaybook] = useState("");
   const [contactsText, setContactsText] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -170,10 +171,16 @@ function CreateCampaignDialog({
 
     setSubmitting(true);
     try {
-      await apiClient.createCampaign({ name, script: script || undefined, contacts });
+      await apiClient.createCampaign({
+        name,
+        script: script || undefined,
+        objectionPlaybook: objectionPlaybook || undefined,
+        contacts,
+      });
       toast.success("Campaign created");
       setName("");
       setScript("");
+      setObjectionPlaybook("");
       setContactsText("");
       onCreated();
     } catch (err) {
@@ -201,6 +208,15 @@ function CreateCampaignDialog({
           <div className="flex flex-col gap-1.5">
             <Label>Call script (guidance for the AI agent)</Label>
             <Textarea value={script} onChange={(e) => setScript(e.target.value)} rows={3} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Objection playbook (optional)</Label>
+            <Textarea
+              value={objectionPlaybook}
+              onChange={(e) => setObjectionPlaybook(e.target.value)}
+              rows={3}
+              placeholder={'e.g. "If price is the objection, mention the 3-installment plan"'}
+            />
           </div>
           <div className="flex flex-col gap-1.5">
             <Label>Contacts</Label>
@@ -253,6 +269,12 @@ function CampaignDetailSheet({ campaignId, onClose }: { campaignId: string | nul
                 <div className="rounded-md border p-3 text-sm">
                   <p className="mb-1 font-medium">Script</p>
                   <p className="whitespace-pre-wrap text-muted-foreground">{campaign.script}</p>
+                </div>
+              )}
+              {campaign.objectionPlaybook && (
+                <div className="rounded-md border p-3 text-sm">
+                  <p className="mb-1 font-medium">Objection playbook</p>
+                  <p className="whitespace-pre-wrap text-muted-foreground">{campaign.objectionPlaybook}</p>
                 </div>
               )}
               <div className="flex flex-col gap-2">

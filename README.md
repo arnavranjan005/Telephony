@@ -114,7 +114,7 @@ and set that URL in the Telnyx portal.
 - `GET /api/calendar/busy?timeMin=&timeMax=` — free/busy lookup
 - `POST /api/calendar/appointments` `{ title, startTime, endTime, leadId?, callId?, attendeeEmail? }` — book directly via REST
 - `GET /api/appointments`, `GET /api/appointments/:id`, `POST /api/appointments/:id/cancel`
-- `POST /api/campaigns` `{ name, script?, contacts: [{ leadId? | phoneNumber, firstName?, lastName? }] }` — create a campaign (upserts leads from phone numbers)
+- `POST /api/campaigns` `{ name, script?, objectionPlaybook?, contacts: [{ leadId? | phoneNumber, firstName?, lastName? }] }` — create a campaign (upserts leads from phone numbers); `objectionPlaybook` is optional campaign-specific rebuttal guidance layered on top of the baseline objection-handling instruction every call already gets (see below)
 - `GET /api/campaigns`, `GET /api/campaigns/:id`, `POST /api/campaigns/:id/start`, `POST /api/campaigns/:id/pause` — the dial worker processes `PENDING` contacts of any `RUNNING` campaign automatically and marks it `COMPLETED` once none are left
 - `POST /api/followups` `{ leadId, scheduledAt, reason? }` — schedule a callback; the dial worker dials it automatically once due
 - `GET /api/followups`, `POST /api/followups/:id/cancel`
@@ -439,10 +439,15 @@ section above. What's genuinely still missing:
   trigger an opt-out; `add_to_dnc`'s own trigger condition was separately widened to catch an
   *implicit* opt-out ("just leave me alone," not just "stop calling me"), which is the more accurate
   fix for that gap than wiring mood into it.
-- **Objection handling / branching dynamic scripting** - the AI adapts within a conversation (via the
-  LLM itself plus the per-campaign script appended to its system prompt), but there's no dedicated
-  objection-detection logic or a scripted decision-tree/branching engine - it's one flat system
-  prompt, not an "agent-assist" style flow.
+- **Objection handling** - partially addressed: `buildSystemPrompt` (`apps/api/src/callConversationService.ts`)
+  gives every call a baseline instruction to acknowledge and honestly address objections (price, timing,
+  "not interested," etc.) without inventing facts, and to weigh how hard to push a rebuttal against the
+  caller's most recently recorded sentiment (drop it entirely if sentiment is `very_negative`). Campaigns
+  can optionally layer a `Campaign.objectionPlaybook` field (same opt-in pattern as `script`, settable from
+  the admin panel's "New campaign" form) with product-specific rebuttals - most campaigns won't need one,
+  since the baseline covers generic objections. What's still missing: there's no scripted decision-tree/
+  branching engine or dedicated objection-*detection* logic separate from the LLM's own judgment - it's
+  layered system-prompt text, not an "agent-assist" style flow with structured branches.
 - **Inbound call routing by intent** - every inbound call is answered and handled end-to-end by the
   same AI agent; there's no transfer/escalation to a human or routing to different
   departments/queues based on detected intent.
