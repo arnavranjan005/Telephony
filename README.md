@@ -589,7 +589,14 @@ output against ground truth:
   exact/GT string comparison, since generative phrasing varies run to run even at low temperature. The
   judge is given the rubric and the reply and returns a strict `{pass, reason}` verdict.
 
-Add new cases to `apps/api/src/ai/evals/cases.ts`. Requires a real `GOOGLE_AI_API_KEY` exported (every
+`cases.ts` covers every tool (`check_appointment_availability`, `schedule_appointment`,
+`cancel_appointment`, `update_lead_status`, `add_to_dnc`, `schedule_followup`, `cancel_followup`,
+`record_sentiment`) and the chaining/negotiation behavior `SYSTEM_PROMPT` documents: booking only
+proceeds once availability is confirmed, changing an already-booked appointment/callback cancels the old
+one first, a follow-up request outside the legal calling window is renegotiated (ask the suggested time,
+confirm, retry with that exact time - not a re-guessed one) rather than silently dropped, and objection
+handling differs by sentiment (a neutral price objection gets a real rebuttal; very-negative sentiment
+drops it entirely). Add new cases alongside these in `apps/api/src/ai/evals/cases.ts`. Requires a real `GOOGLE_AI_API_KEY` exported (every
 other env var can keep the dummy value `tests/setupEnv.ts` already provides, since no tool handler is
 actually invoked here — only `agent.generateReply` is called):
 
