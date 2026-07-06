@@ -116,6 +116,7 @@ and set that URL in the Telnyx portal.
 - `GET /api/appointments`, `GET /api/appointments/:id`, `POST /api/appointments/:id/cancel`
 - `POST /api/campaigns` `{ name, script?, objectionPlaybook?, contacts: [{ leadId? | phoneNumber, firstName?, lastName? }] }` — create a campaign (upserts leads from phone numbers); `objectionPlaybook` is optional campaign-specific rebuttal guidance layered on top of the baseline objection-handling instruction every call already gets (see below)
 - `GET /api/campaigns`, `GET /api/campaigns/:id`, `POST /api/campaigns/:id/start`, `POST /api/campaigns/:id/pause` — the dial worker processes `PENDING` contacts of any `RUNNING` campaign automatically and marks it `COMPLETED` once none are left
+- `GET /api/campaigns/objection-baseline` — returns the baseline objection-handling instruction text every call gets by default (`OBJECTION_HANDLING_BASELINE`, `apps/api/src/callConversationService.ts`); used to display it in the admin panel's "New campaign" form so whoever writes `objectionPlaybook` can see what's already covered
 - `POST /api/followups` `{ leadId, scheduledAt, reason? }` — schedule a callback; the dial worker dials it automatically once due
 - `GET /api/followups`, `POST /api/followups/:id/cancel`
 - `GET /api/dnc`, `POST /api/dnc` `{ phoneNumber, reason? }`, `DELETE /api/dnc/:phoneNumber` — global Do-Not-Call list; every outbound dial (manual, campaign, or follow-up) is checked against it first
@@ -153,7 +154,11 @@ against `@telephony/shared-types` throughout. Pages: a live-updating
 table, live call monitoring, and a live activity feed), **Calls** (log +
 transcript detail), **Leads** (list + status/consent/notes editing),
 **Campaigns** (create, list, start/pause, per-campaign contact/performance
-detail), **Appointments** (list view and a calendar view), **Follow-ups**,
+detail, plus an optional objection-playbook field on the create form - which
+auto-displays the baseline objection-handling text every call already gets,
+fetched from `GET /api/campaigns/objection-baseline`, so it's clear what's
+already covered before adding campaign-specific detail), **Appointments**
+(list view and a calendar view), **Follow-ups**,
 and the **Do-Not-Call** list — each with cancel/create actions wired straight
 to the REST API.
 
