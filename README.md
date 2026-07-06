@@ -573,3 +573,33 @@ npm run e2e:down     # tear the containers down
 Requires Docker (with the `docker compose` plugin) installed locally. CI runs this same suite as a
 separate `e2e` job using GitHub Actions service containers instead of `docker compose` — see
 `.github/workflows/ci.yml`.
+
+## AI reply-quality evals (`apps/api/src/ai/evals`)
+
+Every test above mocks the `AIAgent` (see `aiConversation.e2e-test.ts` above) with scripted replies —
+that proves the tool-calling loop, but never checks whether the real model actually produces a good
+reply for a given input. `npm run eval:ai` does that: it calls the real configured `AIAgent`
+(`GoogleAgent`/Gemini) once per case with a fixed message history + tool set + system prompt (the same
+`SYSTEM_PROMPT`/tool builders production wires up in `callConversationService.ts`), and compares the
+output against ground truth:
+
+- **Tool calls** (`expectedToolCalls` in `cases.ts`) are checked structurally — name plus an args
+  subset-match — since tool selection is close to deterministic and a real regression signal.
+- **Free-text replies** (`rubric` in `cases.ts`) are graded by an LLM-as-judge (`judge.ts`) rather than
+  exact/GT string comparison, since generative phrasing varies run to run even at low temperature. The
+  judge is given the rubric and the reply and returns a strict `{pass, reason}` verdict.
+
+Add new cases to `apps/api/src/ai/evals/cases.ts`. Requires a real `GOOGLE_AI_API_KEY` exported (every
+other env var can keep the dummy value `tests/setupEnv.ts` already provides, since no tool handler is
+actually invoked here — only `agent.generateReply` is called):
+
+```bash
+GOOGLE_AI_API_KEY=your-real-key npm run eval:ai
+```
+
+Not part of `npm test`/CI — real, billed model calls with non-deterministic pass/fail don't belong in
+the fast/deterministic default suite, so it lives behind its own `*.eval-test.ts` suffix and
+`jest.eval.config.js`. It also needs `--experimental-vm-modules` (already set by the `eval:ai` script)
+for the same ESM dynamic-`import()` reason described in the `aiConversation.e2e-test.ts` bullet above —
+this suite calls the real `GoogleAgent`, so unlike that e2e spec it can't sidestep the issue by mocking
+the provider.

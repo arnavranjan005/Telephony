@@ -17,7 +17,8 @@
     "e2e:up": "docker compose up -d --wait",
     "e2e:down": "docker compose down",
     "e2e:migrate": "DATABASE_URL=postgresql://telephony:telephony@localhost:55432/telephony_e2e npx prisma db push --schema packages/database/prisma/schema.prisma --skip-generate",
-    "e2e": "npm run e2e:up && npm run e2e:migrate && nx run e2e:e2e"
+    "e2e": "npm run e2e:up && npm run e2e:migrate && nx run e2e:e2e",
+    "eval:ai": "nx run api:eval:ai"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
