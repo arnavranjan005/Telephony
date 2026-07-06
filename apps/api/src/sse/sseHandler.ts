@@ -24,7 +24,7 @@ export function streamCallEvents(req: Request, res: Response): void {
 
   const heartbeat = setInterval(() => {
     res.write(": heartbeat\n\n");
-  }, 25_000);
+  }, 10_000);
 
   req.on("close", () => {
     clearInterval(heartbeat);
@@ -54,7 +54,7 @@ export function streamAllEvents(req: Request, res: Response): void {
 
   const heartbeat = setInterval(() => {
     res.write(": heartbeat\n\n");
-  }, 25_000);
+  }, 10_000);
 
   req.on("close", () => {
     clearInterval(heartbeat);
