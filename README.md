@@ -150,11 +150,12 @@ it never needs a Node process of its own in production.
 Built with shadcn/ui + Tailwind v4 (`npx shadcn@latest add ...`), typed
 against `@telephony/shared-types` throughout. Pages: a live-updating
 **Dashboard** (stat cards, a 14-day call-volume chart, a campaign-performance
-table, and a live activity feed), **Calls** (log + transcript detail),
-**Leads** (list + status/consent/notes editing), **Campaigns** (create, list,
-start/pause, per-campaign contact/performance detail), **Appointments**,
-**Follow-ups**, and the **Do-Not-Call** list — each with cancel/create actions
-wired straight to the REST API.
+table, live call monitoring, and a live activity feed), **Calls** (log +
+transcript detail), **Leads** (list + status/consent/notes editing),
+**Campaigns** (create, list, start/pause, per-campaign contact/performance
+detail), **Appointments** (list view and a calendar view), **Follow-ups**,
+and the **Do-Not-Call** list — each with cancel/create actions wired straight
+to the REST API.
 
 Live updates come from a dashboard-wide SSE feed (`GET /api/events/stream`,
 `apps/api/src/sse/sseHandler.ts`'s `streamAllEvents`, consumed via
@@ -163,14 +164,22 @@ campaign/appointment/follow-up/DNC lifecycle event over the same `EventEmitter`
 bus the per-call stream uses — the dashboard's stat cards, tables, and
 activity feed all refetch/update as events arrive, with no polling.
 
+**Live call monitoring** (`apps/web/src/components/live-calls-panel.tsx`)
+lists every call currently `IN_PROGRESS` on the dashboard; expanding one
+mounts `LiveCallTranscript`, which subscribes to that call's own
+`GET /api/calls/:callId/events` SSE feed and renders each conversation turn
+the instant `callConversationService`/`callStreamSession` publish it — no
+polling, no refetch.
+
+**Appointments calendar view** (`apps/web/src/app/appointments/page.tsx`) adds
+a calendar tab (shadcn `Calendar`) alongside the flat list, grouping bookings
+by local-calendar-day so you can see a month at a glance instead of only a
+chronological list.
+
 Analytics themselves are computed server-side in
 `packages/domain/src/analyticsService.ts` (`getOverviewStats`,
 `getCampaignPerformance`, `getCallTimeseries`) and exposed at
 `/api/analytics/{overview,campaigns,timeseries}`.
-
-Not yet built: live call monitoring (watching an in-progress call's transcript
-stream from the dashboard) and a Google Calendar view for appointments (the
-appointments page is a flat list, not a calendar widget).
 
 ### Build gotcha: don't let `NODE_ENV` leak into `next build`
 
@@ -282,10 +291,14 @@ The legacy webhook-based flow still exists as a parallel path for anyone who opt
   LLM has no innate sense of timing, only message order - a late-arriving result could be read as more
   recent than it actually was. The lock only gates the tool-handler invocation itself; barge-in, STT,
   and the next turn's own LLM call are unaffected and stay instant.
-- **TTS (MVP)**: one-shot synthesis via ElevenLabs' REST endpoint (`ttsSender.ts`), paced out over the
-  WebSocket in ~20ms frames rather than dumped all at once. Streaming TTS (audio starting before the
-  full reply is synthesized) is a natural Phase 2 - the module's external contract (`sendSpeech(text,
-  sendFrame)` returning a cancelable handle) is designed not to need to change for that swap.
+- **TTS**: streaming synthesis via ElevenLabs' `/stream` endpoint (`ttsSender.ts`) - the response body
+  is consumed as a stream of PCM chunks as ElevenLabs synthesizes them and paced out over the WebSocket
+  in ~20ms frames as bytes arrive, so playback can start before the full reply has finished
+  synthesizing, instead of waiting for one complete buffer. `cancel()` aborts the in-flight HTTP
+  request itself (via `AbortSignal`), not just local playback, so a barge-in stops paying for/
+  downloading audio nobody will hear. The remaining gap: the full reply text still has to be sent to
+  ElevenLabs in one request up front - there's no token-by-token LLM output streaming feeding this
+  incrementally, so a streaming LLM → streaming TTS pipeline end-to-end is the natural next step.
 - **Persistence changes shape**: unlike the webhook path's single end-of-turn batch write, a
   streaming turn persists incrementally (the user utterance the instant it's finalized, each
   tool-call/tool-result message as it actually happens, the final reply only if not superseded) -
@@ -409,19 +422,36 @@ fine at this scale, but worth a TTL sweep if this sees real traffic.
 
 ## Not yet implemented
 
-The full requirements doc describes a much larger system. This intentionally leaves out: sentiment
-analysis (detecting caller sentiment mid-call to trigger retention logic), live call monitoring
-(watching an in-progress call's transcript from the dashboard), and a Google Calendar view for
-appointments (currently a flat list). These fit into the same architecture — new routes/services/tools/
-pages — and are natural next increments.
+The full requirements doc describes a much larger system. Live call monitoring and a Google Calendar
+view for appointments (both previously listed here) are now implemented - see the "Admin panel"
+section above. What's genuinely still missing:
+
+- **Sentiment analysis / retention ("save") logic** - no mid-call sentiment detection, so there's no
+  automatic trigger for retention logic or for adding a caller to the DNC list based on negative
+  sentiment (today `add_to_dnc` only fires when the caller explicitly asks to stop being contacted).
+- **Objection handling / branching dynamic scripting** - the AI adapts within a conversation (via the
+  LLM itself plus the per-campaign script appended to its system prompt), but there's no dedicated
+  objection-detection logic or a scripted decision-tree/branching engine - it's one flat system
+  prompt, not an "agent-assist" style flow.
+- **Inbound call routing by intent** - every inbound call is answered and handled end-to-end by the
+  same AI agent; there's no transfer/escalation to a human or routing to different
+  departments/queues based on detected intent.
+- **Paralinguistic voice realism** - no custom fillers ("um," "ah," breathing pauses) or human-like
+  pacing control; voice quality is whatever ElevenLabs' endpoint and `voice_settings` return.
+- **Preferred tech stack** - the requirements doc asks for Siphon/Dograh (open-source, self-hosted,
+  no recurring platform fees). This app is instead built on Telnyx, ElevenLabs, Deepgram, and Google
+  Gemini - all paid, metered third-party APIs - so the "no recurring subscription fees" non-functional
+  requirement isn't met as specified, even though the functional behavior is equivalent.
 
 Real-time bidirectional media streaming with barge-in is now implemented and is the default calling
-path (see the section above), but it's still an MVP: it's a one-shot (non-streaming) TTS synthesis
-rather than true streaming TTS (so time-to-first-audio isn't as low as it could be), one global
-flag rather than per-DID/per-campaign granularity, and no custom paralinguistic fillers/pacing —
-voice quality is whatever ElevenLabs' plain REST endpoint returns. Phase 2 (streaming TTS +
-streaming/incremental LLM output) and Phase 3 (multi-vendor STT/TTS abstraction) are natural next
-increments on the same foundation.
+path (see the section above), and TTS synthesis itself now streams (ElevenLabs' `/stream` endpoint,
+consumed chunk-by-chunk as audio is generated). Per-campaign/per-follow-up opt-out of streaming is
+already supported (`streamingEnabled` on `Campaign`/`FollowUp`); "per-DID" granularity doesn't apply
+yet since the app only supports a single `TELNYX_FROM_NUMBER` - no multi-number support. Still
+missing: streaming/incremental LLM output (the full reply text is sent to ElevenLabs in one request,
+so a fully streaming LLM → streaming TTS pipeline isn't there yet) and a multi-vendor STT/TTS
+abstraction (Deepgram/ElevenLabs are hardcoded, not swappable). Both are natural next increments on
+the same foundation.
 
 TCPA compliance is partial (see the section above for what's covered - consent tracking and calling
 hours). Still missing: National DNC Registry scrubbing (the FCC's registry, distinct from this app's
