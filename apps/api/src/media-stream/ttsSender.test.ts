@@ -1,5 +1,14 @@
 jest.mock("@telephony/config", () => ({
-  env: { ELEVENLABS_API_KEY: "test-key", ELEVENLABS_VOICE_ID: "voice_1", MEDIA_STREAM_SAMPLE_RATE: 8000 },
+  env: {
+    ELEVENLABS_API_KEY: "test-key",
+    ELEVENLABS_VOICE_ID: "voice_1",
+    MEDIA_STREAM_SAMPLE_RATE: 8000,
+    ELEVENLABS_STABILITY: 0.45,
+    ELEVENLABS_SIMILARITY_BOOST: 0.8,
+    ELEVENLABS_STYLE: 0.3,
+    ELEVENLABS_SPEAKER_BOOST: true,
+    ELEVENLABS_SPEED: 1.0,
+  },
 }));
 
 import { sendSpeech } from "./ttsSender";
@@ -51,6 +60,25 @@ describe("sendSpeech", () => {
       })
     );
     expect(sendFrame).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends the configured voice_settings on every request", async () => {
+    const audio = Buffer.alloc(320);
+    jest.spyOn(global, "fetch").mockResolvedValue(mockStreamingResponse([audio]));
+
+    const handle = sendSpeech("hello there", jest.fn());
+    await jest.runAllTimersAsync();
+    await handle.done;
+
+    const [, init] = (global.fetch as jest.Mock).mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body.voice_settings).toEqual({
+      stability: 0.45,
+      similarity_boost: 0.8,
+      style: 0.3,
+      use_speaker_boost: true,
+      speed: 1.0,
+    });
   });
 
   it("plays a frame as soon as it arrives rather than waiting for the whole reply", async () => {

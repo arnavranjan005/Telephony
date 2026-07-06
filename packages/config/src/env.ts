@@ -60,6 +60,17 @@ const envSchema = z.object({
   DEEPGRAM_MODEL: z.string().default("nova-2-phonecall"),
   ELEVENLABS_API_KEY: z.string().optional(),
   ELEVENLABS_VOICE_ID: z.string().optional(),
+  // Voice tuning, passed through as ElevenLabs' `voice_settings` on every TTS
+  // request - defaults favor a warmer, more natural-sounding phone voice over
+  // ElevenLabs' own flatter/more consistent defaults (stability 0.5,
+  // similarity_boost 0.75, style 0, speaker_boost off). Lower stability and a
+  // touch of style trade some consistency for expressiveness; still bounded
+  // well short of the erratic end of ElevenLabs' own range.
+  ELEVENLABS_STABILITY: z.coerce.number().min(0).max(1).default(0.45),
+  ELEVENLABS_SIMILARITY_BOOST: z.coerce.number().min(0).max(1).default(0.8),
+  ELEVENLABS_STYLE: z.coerce.number().min(0).max(1).default(0.3),
+  ELEVENLABS_SPEAKER_BOOST: booleanEnv.default(true),
+  ELEVENLABS_SPEED: z.coerce.number().min(0.7).max(1.2).default(1.0),
 });
 
 function loadEnv() {

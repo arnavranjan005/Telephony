@@ -31,7 +31,17 @@ async function fetchSpeechStream(text: string, signal: AbortSignal): Promise<Rea
         "xi-api-key": env.ELEVENLABS_API_KEY ?? "",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ text, model_id: "eleven_flash_v2_5" }),
+      body: JSON.stringify({
+        text,
+        model_id: "eleven_flash_v2_5",
+        voice_settings: {
+          stability: env.ELEVENLABS_STABILITY,
+          similarity_boost: env.ELEVENLABS_SIMILARITY_BOOST,
+          style: env.ELEVENLABS_STYLE,
+          use_speaker_boost: env.ELEVENLABS_SPEAKER_BOOST,
+          speed: env.ELEVENLABS_SPEED,
+        },
+      }),
       signal,
     }
   );
