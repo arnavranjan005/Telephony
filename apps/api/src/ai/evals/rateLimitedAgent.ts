@@ -15,13 +15,15 @@ function sleep(ms: number): Promise<void> {
 // RetryInfo, falls back to exponential backoff) - both are worth retrying,
 // unlike a 400/permission error which would just repeat.
 function isRetryableError(error: unknown): boolean {
-  return error instanceof Error && /got status:\s*(429|503)/.test(error.message);
+  if (!(error instanceof Error)) return false;
+  const status = (error as { status?: number }).status;
+  return status === 429 || status === 503;
 }
 
-// @google/genai doesn't expose a structured status/retry-after field - it
-// bakes the whole JSON error body into Error.message as
-// `got status: 429 Too Many Requests. {...}`. Google's own RetryInfo.retryDelay
-// (e.g. "34s") in that body is a better wait than a guessed backoff.
+// @google/genai's ApiError sets a structured `status` field (checked above)
+// and stringifies the raw error body straight into Error.message (no
+// "got status: ..." prefix). Google's own RetryInfo.retryDelay (e.g. "34s")
+// in that body is a better wait than a guessed backoff.
 function parseSuggestedRetryDelayMs(message: string): number | null {
   const jsonStart = message.indexOf("{");
   if (jsonStart === -1) return null;
