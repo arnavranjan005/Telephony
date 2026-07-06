@@ -456,8 +456,23 @@ section above. What's genuinely still missing:
 - **Inbound call routing by intent** - every inbound call is answered and handled end-to-end by the
   same AI agent; there's no transfer/escalation to a human or routing to different
   departments/queues based on detected intent.
-- **Paralinguistic voice realism** - no custom fillers ("um," "ah," breathing pauses) or human-like
-  pacing control; voice quality is whatever ElevenLabs' endpoint and `voice_settings` return.
+- **Paralinguistic voice realism** - partially addressed: `VERBAL_FILLER_GUIDANCE`
+  (`apps/api/src/callConversationService.ts`, folded into `SYSTEM_PROMPT`) instructs the agent to
+  occasionally write a natural filler ("um," "uh") or brief self-correction into its own reply text,
+  the way a real person talks rather than reading a script - at most one per reply, and skipped
+  entirely when stating something the caller needs to get right the first time (appointment times,
+  phone numbers, prices). Since fillers are genuine spoken words, they're written into the same reply
+  text that's both synthesized by TTS and persisted/displayed in the transcript - no separate markup,
+  no code change beyond the prompt. What's still missing: breathing sounds and human-like pacing.
+  ElevenLabs *does* support real SSML `<break time="x.xs" />` pause tags (confirmed via their docs -
+  works on `eleven_flash_v2_5`, the model this app uses, gated behind `enable_ssml_parsing: true`;
+  Eleven V3 is the exception that doesn't support them), but that's deliberately not implemented yet -
+  the right design is code-level injection into a separate TTS-only copy of the text (based on
+  punctuation), not the LLM writing raw tags into its own reply, since that reply string is also what
+  gets persisted/shown in the transcript and a literal `<break time="0.3s" />` would look broken there.
+  Actual breath-sound audio isn't available via SSML at all on this model - it's an Eleven v3-only
+  proprietary bracket-tag feature (`[breathes]`, `[sighs]`), a different, still-experimental model from
+  the one this app uses today.
 - **Preferred tech stack (Siphon/Dograh) not used** - both are orchestration/self-hosting layers, not
   replacements for STT/TTS/LLM/telephony themselves (they let you bring your own provider, or swap to
   fully self-hosted open models, e.g. local Whisper/a local LLM/open TTS). This app already avoids the

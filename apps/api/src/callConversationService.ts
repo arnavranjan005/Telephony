@@ -26,6 +26,21 @@ push back, weigh it against the caller's most recently recorded sentiment: if it
 mildly negative, a genuine rebuttal is appropriate; if it's very_negative, drop the rebuttal entirely -
 just acknowledge their frustration and offer to wrap up the call gracefully or follow up later instead.`;
 
+/**
+ * Verbal-filler guidance ("um," "uh") for a more human-sounding voice. These
+ * are literal words the LLM writes into its own reply - unlike SSML pause
+ * tags, they belong in the reply text itself since they're genuinely part of
+ * what's spoken, so it's fine for them to also appear as-is in the
+ * persisted transcript and live UI (ConversationMessage.content), unlike a
+ * markup tag that would look broken there. Exported separately (also folded
+ * into SYSTEM_PROMPT below) so it can be referenced/tested on its own.
+ */
+export const VERBAL_FILLER_GUIDANCE = `Speak the way a real person does on a call, not like a written script - it's fine to
+include the occasional natural filler ("um," "uh," "you know") or a brief self-correction where one would
+genuinely occur, rather than delivering every line as a polished, complete sentence. Don't overdo it - one
+per reply at most, and skip fillers entirely when stating something the caller needs to get right the
+first time (appointment times, phone numbers, prices), since clarity matters more than realism there.`;
+
 export const SYSTEM_PROMPT = `You are a friendly, professional voice sales/support agent speaking on a live phone call.
 Keep responses short and conversational (1-3 sentences), as they will be spoken aloud via text-to-speech.
 Use the available tools to check calendar availability, book appointments, and update lead status when appropriate.
@@ -37,7 +52,8 @@ schedule_appointment or schedule_followup - don't leave conflicting actions in p
 Whenever you notice a shift in the caller's tone or mood (e.g. growing frustrated, upset, or notably
 pleased), call record_sentiment to note it - every time it changes, not just once - and let it guide
 how you say your next line.
-${OBJECTION_HANDLING_BASELINE}`;
+${OBJECTION_HANDLING_BASELINE}
+${VERBAL_FILLER_GUIDANCE}`;
 
 interface CampaignPromptSource {
   script?: string | null;

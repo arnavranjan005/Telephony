@@ -18,11 +18,22 @@ jest.mock("./conversationHistory", () => ({
   ROLE_TO_DB: { user: "USER", assistant: "ASSISTANT", system: "SYSTEM", tool: "TOOL" },
 }));
 
-import { buildSystemPrompt, OBJECTION_HANDLING_BASELINE, SYSTEM_PROMPT } from "./callConversationService";
+import {
+  buildSystemPrompt,
+  OBJECTION_HANDLING_BASELINE,
+  SYSTEM_PROMPT,
+  VERBAL_FILLER_GUIDANCE,
+} from "./callConversationService";
 
 describe("OBJECTION_HANDLING_BASELINE", () => {
   it("is embedded in SYSTEM_PROMPT so every call gets it by default", () => {
     expect(SYSTEM_PROMPT).toContain(OBJECTION_HANDLING_BASELINE);
+  });
+});
+
+describe("VERBAL_FILLER_GUIDANCE", () => {
+  it("is embedded in SYSTEM_PROMPT so every call gets it by default", () => {
+    expect(SYSTEM_PROMPT).toContain(VERBAL_FILLER_GUIDANCE);
   });
 });
 
