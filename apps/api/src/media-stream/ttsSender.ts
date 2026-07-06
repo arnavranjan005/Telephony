@@ -13,15 +13,18 @@ export interface TtsSendHandle {
 }
 
 /**
- * MVP TTS: one-shot synthesis via ElevenLabs' plain (non-streaming) REST
- * endpoint - the whole reply is synthesized and billed for up front, in one
- * request, before any audio is sent. Phase 2 swaps this for ElevenLabs'
- * streaming endpoint without changing this function's external contract.
+ * Requests speech via ElevenLabs' streaming endpoint. The full `text` still
+ * has to be sent up front in one request (no LLM-side streaming feeds this),
+ * but the response body arrives as a stream of PCM chunks as ElevenLabs
+ * synthesizes them, instead of one buffer only available once the entire
+ * clip is done - callers can start playing the first chunk while the rest is
+ * still being generated. `signal` lets a barge-in cancel the in-flight HTTP
+ * request itself, not just stop reading from it.
  */
-async function synthesizeSpeech(text: string): Promise<Buffer> {
+async function fetchSpeechStream(text: string, signal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
   const voiceId = env.ELEVENLABS_VOICE_ID;
   const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=pcm_${env.MEDIA_STREAM_SAMPLE_RATE}`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream?output_format=pcm_${env.MEDIA_STREAM_SAMPLE_RATE}`,
     {
       method: "POST",
       headers: {
@@ -29,24 +32,32 @@ async function synthesizeSpeech(text: string): Promise<Buffer> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ text, model_id: "eleven_flash_v2_5" }),
+      signal,
     }
   );
 
-  if (!response.ok) {
-    throw new Error(`ElevenLabs TTS request failed: ${response.status} ${await response.text()}`);
+  if (!response.ok || !response.body) {
+    throw new Error(`ElevenLabs streaming TTS request failed: ${response.status} ${await response.text()}`);
   }
 
-  return Buffer.from(await response.arrayBuffer());
+  return response.body;
 }
 
 /**
- * Synthesizes `text`, then paces the resulting raw PCM audio out via
- * `sendFrame` in ~20ms chunks (matching Telnyx's expected media cadence)
- * rather than dumping the whole buffer at once. `sendFrame` receives a
- * base64-encoded payload ready to wrap in a Telnyx `media` frame.
+ * Streams `text` from ElevenLabs and paces the arriving raw PCM audio out via
+ * `sendFrame` in ~20ms chunks (matching Telnyx's expected media cadence) as
+ * bytes come in, rather than waiting for the whole reply to finish
+ * synthesizing first. `sendFrame` receives a base64-encoded payload ready to
+ * wrap in a Telnyx `media` frame.
+ *
+ * Barge-in cancellation: `cancel()` both aborts the underlying fetch (so we
+ * stop paying for/downloading audio nobody will hear) and flips `cancelled`,
+ * which every loop checks before doing further work - so no frame sent after
+ * cancel() ever reaches Telnyx, matching the one-shot version's contract.
  */
 export function sendSpeech(text: string, sendFrame: (base64Payload: string) => void): TtsSendHandle {
   let cancelled = false;
+  const abortController = new AbortController();
   let resolveDone!: () => void;
   const done = new Promise<void>((resolve) => {
     resolveDone = resolve;
@@ -56,18 +67,38 @@ export function sendSpeech(text: string, sendFrame: (base64Payload: string) => v
 
   (async () => {
     try {
-      const audio = await synthesizeSpeech(text);
+      const stream = await fetchSpeechStream(text, abortController.signal);
       if (cancelled) return;
 
-      for (let offset = 0; offset < audio.length; offset += bytesPerFrame) {
+      const reader = stream.getReader();
+      let pending = Buffer.alloc(0);
+
+      while (true) {
+        const { done: streamDone, value } = await reader.read();
         if (cancelled) return;
-        const frame = audio.subarray(offset, offset + bytesPerFrame);
-        sendFrame(encodeAudioPayload(frame));
-        await new Promise((resolve) => setTimeout(resolve, FRAME_DURATION_MS));
+        if (streamDone) break;
+
+        pending = pending.length === 0 ? Buffer.from(value) : Buffer.concat([pending, Buffer.from(value)]);
+
+        while (pending.length >= bytesPerFrame) {
+          if (cancelled) return;
+          sendFrame(encodeAudioPayload(pending.subarray(0, bytesPerFrame)));
+          pending = pending.subarray(bytesPerFrame);
+          await new Promise((resolve) => setTimeout(resolve, FRAME_DURATION_MS));
+        }
+      }
+
+      // Trailing partial frame (audio length isn't guaranteed to be an exact
+      // multiple of the frame size) - still worth playing rather than
+      // dropping the last few milliseconds of the reply.
+      if (!cancelled && pending.length > 0) {
+        sendFrame(encodeAudioPayload(pending));
       }
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error("TTS synthesis/send failed:", error);
+      if (!cancelled) {
+        // eslint-disable-next-line no-console
+        console.error("TTS synthesis/send failed:", error);
+      }
     } finally {
       resolveDone();
     }
@@ -76,6 +107,7 @@ export function sendSpeech(text: string, sendFrame: (base64Payload: string) => v
   return {
     cancel: () => {
       cancelled = true;
+      abortController.abort();
     },
     done,
   };
