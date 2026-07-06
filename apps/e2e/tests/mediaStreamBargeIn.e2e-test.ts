@@ -23,9 +23,10 @@
 //   - GoogleAgent            - same provider-agnostic-seam mocking as
 //     aiConversation.e2e-test.ts, for the same reason (@google/genai's
 //     ESM-only dynamic import can't be intercepted by jest.mock).
-//   - `global.fetch`         - ttsSender.ts calls ElevenLabs' REST endpoint
-//     directly via fetch; mocked to return a small deterministic PCM buffer
-//     instead of hitting a live account.
+//   - `global.fetch`         - ttsSender.ts calls ElevenLabs' streaming REST
+//     endpoint directly via fetch; mocked to return a small deterministic PCM
+//     buffer (as a one-chunk stream, matching the real streaming response
+//     shape) instead of hitting a live account.
 //
 // @telephony/config is also overridden (spreading the real parsed env so
 // DATABASE_URL/REDIS_URL stay real) to turn MEDIA_STREAM_ENABLED on - the
@@ -246,10 +247,21 @@ beforeEach(async () => {
   duringGeneration = null;
   freebusyQuery.mockReset();
   eventsInsert.mockReset();
-  global.fetch = jest.fn(async () => ({
-    ok: true,
-    arrayBuffer: async () => makePcmBuffer(10),
-  })) as unknown as typeof fetch;
+  global.fetch = jest.fn(async () => {
+    let delivered = false;
+    return {
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: async () => {
+            if (delivered) return { done: true, value: undefined };
+            delivered = true;
+            return { done: false, value: new Uint8Array(makePcmBuffer(10)) };
+          },
+        }),
+      },
+    };
+  }) as unknown as typeof fetch;
 
   await prisma.conversationMessage.deleteMany();
   await prisma.appointment.deleteMany();
