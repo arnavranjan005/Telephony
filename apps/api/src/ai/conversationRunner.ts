@@ -32,6 +32,7 @@ export async function runConversationTurn(
         content: reply.content ?? "",
         toolName: toolCall.name,
         toolArgs: toolCall.args,
+        thoughtSignature: toolCall.thoughtSignature,
       });
 
       const tool = toolsByName.get(toolCall.name);

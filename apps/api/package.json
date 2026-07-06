@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@deepgram/sdk": "^5.5.0",
-    "@google/genai": "^0.15.0",
+    "@google/genai": "^2.10.0",
     "@telephony/config": "*",
     "@telephony/database": "*",
     "@telephony/domain": "*",

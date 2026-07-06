@@ -166,6 +166,11 @@ model ConversationMessage {
   content   String
   toolName  String?
   toolArgs  Json?
+  // Gemini 3+ "thinking" models attach this to a function-call response and
+  // require it replayed verbatim on that call's turn in the next request -
+  // see AgentMessage.thoughtSignature in apps/api/src/ai/types.ts. Absent for
+  // every model that doesn't produce one (everything pre-Gemini-3).
+  thoughtSignature String?
   // Marks a message whose turn was abandoned mid-flight due to a caller
   // barge-in (streaming call mode only) - the tool call itself still ran to
   // completion and its result is real, but no reply was ever spoken for it.

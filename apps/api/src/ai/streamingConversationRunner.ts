@@ -38,6 +38,7 @@ async function persistMessage(callId: string, message: AgentMessage, interrupted
       content: message.content,
       toolName: message.toolName,
       toolArgs: message.toolArgs as never,
+      thoughtSignature: message.thoughtSignature,
       interrupted,
     },
   });
@@ -99,6 +100,7 @@ export async function runStreamingConversationTurn(
         content: reply.content ?? "",
         toolName: toolCall.name,
         toolArgs: toolCall.args,
+        thoughtSignature: toolCall.thoughtSignature,
       };
       messages.push(assistantToolMessage);
 

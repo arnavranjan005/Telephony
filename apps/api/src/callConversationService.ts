@@ -87,6 +87,7 @@ async function persistNewMessages(callId: string, before: number, all: AgentMess
       content: message.content,
       toolName: message.toolName,
       toolArgs: message.toolArgs as never,
+      thoughtSignature: message.thoughtSignature,
     })),
   });
 

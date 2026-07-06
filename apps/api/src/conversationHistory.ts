@@ -28,5 +28,6 @@ export async function loadHistory(callId: string): Promise<AgentMessage[]> {
     content: row.content,
     toolName: row.toolName ?? undefined,
     toolArgs: (row.toolArgs as Record<string, unknown> | null) ?? undefined,
+    thoughtSignature: row.thoughtSignature ?? undefined,
   }));
 }
