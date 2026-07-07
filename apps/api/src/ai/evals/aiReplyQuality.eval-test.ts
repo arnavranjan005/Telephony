@@ -76,7 +76,7 @@ describe("AI reply quality evals (real Gemini calls, LLM-as-judge for free text)
         assertOrderedToolChain(expectedOrder, actualOrder);
 
         if (evalCase.rubric) {
-          const verdict = await judgeReply(agent, finalReply, evalCase.rubric);
+          const verdict = await judgeReply(agent, history, finalReply, evalCase.rubric);
           if (!verdict.pass) {
             throw new Error(`LLM judge failed reply "${finalReply}" against rubric: ${verdict.reason}`);
           }
@@ -96,7 +96,7 @@ describe("AI reply quality evals (real Gemini calls, LLM-as-judge for free text)
         if (!reply.content) {
           throw new Error(`expected text content to grade against the rubric, got tool calls only: ${JSON.stringify(reply.toolCalls)}`);
         }
-        const verdict = await judgeReply(agent, reply.content, evalCase.rubric);
+        const verdict = await judgeReply(agent, evalCase.messages, reply.content, evalCase.rubric);
         if (!verdict.pass) {
           throw new Error(`LLM judge failed reply "${reply.content}" against rubric: ${verdict.reason}`);
         }
