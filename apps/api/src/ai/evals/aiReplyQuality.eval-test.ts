@@ -125,7 +125,12 @@ describe("AI reply quality evals (real Gemini calls, LLM-as-judge for free text)
         }));
 
         const { history, finalReply } = await runConversationTurn(agent, evalCase.messages, stubbedTools, evalCase.systemPrompt);
-        const actualCalls = extractChainToolCalls(history);
+        // Cases can pre-seed prior-turn tool calls into `evalCase.messages` as conversation
+        // setup (e.g. an already-booked appointment before the caller asks to reschedule) -
+        // only what runConversationTurn actually added this turn should count toward the
+        // expected chain or get reported as "extra", not that scripted backstory.
+        const newMessages = history.slice(evalCase.messages.length);
+        const actualCalls = extractChainToolCalls(newMessages);
         const { matchedAll, actualOrder, extra } = splitToolChain(expectedOrder, actualCalls);
         logExtraToolCalls(evalCase.name, extra);
         if (!matchedAll) {
