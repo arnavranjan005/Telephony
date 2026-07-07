@@ -42,16 +42,36 @@ function assertExpectedToolCall(expected: ExpectedToolCall, actualToolCalls: { n
   }
 }
 
-// Checks `expectedOrder` occurs as a subsequence of `actualOrder` - extra/incidental
-// tool calls in between are fine, but the required ones must appear in that relative order.
-function assertOrderedToolChain(expectedOrder: string[], actualOrder: string[]) {
+// Neither this suite's single-turn nor chain assertions fail on tool calls beyond the ones
+// explicitly checked - a model calling something extra isn't necessarily wrong (e.g. an
+// unplanned record_sentiment) and isn't necessarily fine either (e.g. a surprise
+// cancel_appointment), so it's logged for a human to look at rather than silently ignored
+// or auto-failed.
+function logExtraToolCalls(caseName: string, extra: { name: string; args: Record<string, unknown> }[] | string[]) {
+  if (extra.length === 0) return;
+  console.log(`[extra tool calls] "${caseName}": ${JSON.stringify(extra)}`);
+}
+
+function findExtraToolCalls(
+  expected: ExpectedToolCall[],
+  actual: { name: string; args: Record<string, unknown> }[]
+): { name: string; args: Record<string, unknown> }[] {
+  return actual.filter((call) => !expected.some((exp) => exp.name === call.name && matchesExpectedArgs(exp.args ?? {}, call.args)));
+}
+
+// Checks `expectedOrder` occurs as a subsequence of `actualOrder` - extra/incidental tool
+// calls in between don't fail the chain, but are still returned (see logExtraToolCalls).
+function splitToolChain(expectedOrder: string[], actualOrder: string[]): { matchedAll: boolean; extra: string[] } {
   let cursor = 0;
+  const extra: string[] = [];
   for (const name of actualOrder) {
-    if (name === expectedOrder[cursor]) cursor += 1;
+    if (cursor < expectedOrder.length && name === expectedOrder[cursor]) {
+      cursor += 1;
+    } else {
+      extra.push(name);
+    }
   }
-  if (cursor !== expectedOrder.length) {
-    throw new Error(`expected tool call order ${JSON.stringify(expectedOrder)} as a subsequence, got: ${JSON.stringify(actualOrder)}`);
-  }
+  return { matchedAll: cursor === expectedOrder.length, extra };
 }
 
 describe("AI reply quality evals (real Gemini calls, LLM-as-judge for free text)", () => {
@@ -73,7 +93,11 @@ describe("AI reply quality evals (real Gemini calls, LLM-as-judge for free text)
 
         const { history, finalReply } = await runConversationTurn(agent, evalCase.messages, stubbedTools, evalCase.systemPrompt);
         const actualOrder = history.filter((m) => m.role === "assistant" && m.toolName).map((m) => m.toolName as string);
-        assertOrderedToolChain(expectedOrder, actualOrder);
+        const { matchedAll, extra } = splitToolChain(expectedOrder, actualOrder);
+        logExtraToolCalls(evalCase.name, extra);
+        if (!matchedAll) {
+          throw new Error(`expected tool call order ${JSON.stringify(expectedOrder)} as a subsequence, got: ${JSON.stringify(actualOrder)}`);
+        }
 
         if (evalCase.rubric) {
           const verdict = await judgeReply(agent, history, finalReply, evalCase.rubric);
@@ -86,6 +110,7 @@ describe("AI reply quality evals (real Gemini calls, LLM-as-judge for free text)
 
       const reply = await agent.generateReply(evalCase.messages, evalCase.tools, evalCase.systemPrompt);
 
+      logExtraToolCalls(evalCase.name, findExtraToolCalls(evalCase.expectedToolCalls ?? [], reply.toolCalls));
       for (const expected of evalCase.expectedToolCalls ?? []) {
         assertExpectedToolCall(expected, reply.toolCalls);
       }
