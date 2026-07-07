@@ -47,7 +47,7 @@ function assertExpectedToolCall(expected: ExpectedToolCall, actualToolCalls: { n
 // unplanned record_sentiment) and isn't necessarily fine either (e.g. a surprise
 // cancel_appointment), so it's logged for a human to look at rather than silently ignored
 // or auto-failed.
-function logExtraToolCalls(caseName: string, extra: { name: string; args: Record<string, unknown> }[] | string[]) {
+function logExtraToolCalls(caseName: string, extra: { name: string; args: Record<string, unknown> }[]) {
   if (extra.length === 0) return;
   console.log(`[extra tool calls] "${caseName}": ${JSON.stringify(extra)}`);
 }
@@ -59,19 +59,23 @@ function findExtraToolCalls(
   return actual.filter((call) => !expected.some((exp) => exp.name === call.name && matchesExpectedArgs(exp.args ?? {}, call.args)));
 }
 
-// Checks `expectedOrder` occurs as a subsequence of `actualOrder` - extra/incidental tool
-// calls in between don't fail the chain, but are still returned (see logExtraToolCalls).
-function splitToolChain(expectedOrder: string[], actualOrder: string[]): { matchedAll: boolean; extra: string[] } {
+// Checks `expectedOrder` occurs as a subsequence of `actualCalls`' tool names - extra/incidental
+// tool calls in between don't fail the chain, but are still returned with their args (see
+// logExtraToolCalls) rather than just their names.
+function splitToolChain(
+  expectedOrder: string[],
+  actualCalls: { name: string; args: Record<string, unknown> }[]
+): { matchedAll: boolean; actualOrder: string[]; extra: { name: string; args: Record<string, unknown> }[] } {
   let cursor = 0;
-  const extra: string[] = [];
-  for (const name of actualOrder) {
-    if (cursor < expectedOrder.length && name === expectedOrder[cursor]) {
+  const extra: { name: string; args: Record<string, unknown> }[] = [];
+  for (const call of actualCalls) {
+    if (cursor < expectedOrder.length && call.name === expectedOrder[cursor]) {
       cursor += 1;
     } else {
-      extra.push(name);
+      extra.push(call);
     }
   }
-  return { matchedAll: cursor === expectedOrder.length, extra };
+  return { matchedAll: cursor === expectedOrder.length, actualOrder: actualCalls.map((c) => c.name), extra };
 }
 
 describe("AI reply quality evals (real Gemini calls, LLM-as-judge for free text)", () => {
@@ -92,8 +96,10 @@ describe("AI reply quality evals (real Gemini calls, LLM-as-judge for free text)
         }));
 
         const { history, finalReply } = await runConversationTurn(agent, evalCase.messages, stubbedTools, evalCase.systemPrompt);
-        const actualOrder = history.filter((m) => m.role === "assistant" && m.toolName).map((m) => m.toolName as string);
-        const { matchedAll, extra } = splitToolChain(expectedOrder, actualOrder);
+        const actualCalls = history
+          .filter((m) => m.role === "assistant" && m.toolName)
+          .map((m) => ({ name: m.toolName as string, args: m.toolArgs ?? {} }));
+        const { matchedAll, actualOrder, extra } = splitToolChain(expectedOrder, actualCalls);
         logExtraToolCalls(evalCase.name, extra);
         if (!matchedAll) {
           throw new Error(`expected tool call order ${JSON.stringify(expectedOrder)} as a subsequence, got: ${JSON.stringify(actualOrder)}`);
