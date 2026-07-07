@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "jest",
-    "eval:ai": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.eval.config.js"
+    "eval:ai": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.eval.config.js",
+    "eval:ai:case": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.eval.config.js -t"
   },
   "dependencies": {
     "@deepgram/sdk": "^5.5.0",

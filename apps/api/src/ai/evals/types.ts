@@ -23,4 +23,18 @@ export interface EvalCase {
    * immediately calling add_to_dnc are both a legitimate way to handle it).
    */
   rubricExemptToolCalls?: string[];
+  /**
+   * Runs this case through the real multi-round runConversationTurn loop instead of a
+   * single generateReply call, with every tool's handler replaced by a canned stub result
+   * (so no real Prisma/Calendar/Telnyx side effects happen). Use this to assert an ordered
+   * chain of dependent tool calls the model must produce unassisted across several rounds -
+   * e.g. check availability, then book, then confirm - rather than one isolated call's
+   * output with the intermediate steps pre-seeded into `messages`.
+   */
+  chain?: {
+    /** Canned result returned whenever the named tool is called. Tools not listed here get a generic `{ ok: true }`. */
+    stubResults: Record<string, unknown>;
+    /** Tool names expected to occur in this relative order, as a subsequence of the actual chain (extra/incidental calls in between are fine). */
+    expectedOrder: string[];
+  };
 }
