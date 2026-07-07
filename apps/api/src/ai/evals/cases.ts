@@ -124,6 +124,31 @@ export const EVAL_CASES: EvalCase[] = [
     expectedToolCalls: [{ name: "schedule_appointment" }],
   },
   {
+    // Cases 1 and 5 above each check one isolated hop of this same flow, with
+    // the other hop pre-seeded into `messages` - neither proves the real model
+    // completes the *whole* chain unassisted. This drives the actual
+    // production loop (runConversationTurn) from a single user turn with
+    // stubbed tool handlers, asserting the model autonomously checks
+    // availability, then books, then reports back the booked time - with no
+    // user input in between.
+    name: "booking chain via runConversationTurn: checks availability, books, and confirms the time unassisted",
+    systemPrompt: SYSTEM_PROMPT,
+    tools: ALL_TOOLS,
+    messages: [
+      { role: "user", content: "I'd like to book a consultation for August 1st at 2pm, my email is lead@example.com" },
+    ],
+    chain: {
+      stubResults: {
+        check_appointment_availability: { available: true },
+        schedule_appointment: { booked: true, appointmentId: "appt_chain_1", calendarEventId: "evt_chain_1" },
+      },
+      expectedOrder: ["check_appointment_availability", "schedule_appointment"],
+    },
+    rubric:
+      "The reply must confirm the appointment is booked for 2pm on August 1st, be 1-3 sentences, and must not " +
+      "state any detail (a different time, a price, a guarantee) that wasn't established in the conversation.",
+  },
+  {
     name: "strong buying interest updates lead status to HOT",
     systemPrompt: SYSTEM_PROMPT,
     tools: ALL_TOOLS,
@@ -181,6 +206,56 @@ export const EVAL_CASES: EvalCase[] = [
       { role: "user", content: "Actually, can we move it to 4pm instead?" },
     ],
     expectedToolCalls: [{ name: "cancel_appointment" }],
+  },
+  {
+    // The case above only checks that cancel_appointment gets called - it
+    // never proves the model goes on to actually rebook the new time and
+    // report it back, unassisted, in the same turn. This drives the same
+    // "already booked, then asks to reschedule" transcript through the real
+    // runConversationTurn loop and asserts the full cancel -> rebook -> confirm
+    // chain, with no user input between the tool calls.
+    name: "reschedule chain via runConversationTurn: cancels the old booking before booking and confirming the new time",
+    systemPrompt: SYSTEM_PROMPT,
+    tools: ALL_TOOLS,
+    messages: [
+      { role: "user", content: "I'd like to book a consultation for August 1st at 2pm, my email is lead@example.com" },
+      {
+        role: "assistant",
+        content: "",
+        toolName: "check_appointment_availability",
+        toolArgs: { startTime: "2026-08-01T14:00:00Z", endTime: "2026-08-01T14:30:00Z" },
+      },
+      { role: "tool", content: JSON.stringify({ available: true }), toolName: "check_appointment_availability" },
+      {
+        role: "assistant",
+        content: "",
+        toolName: "schedule_appointment",
+        toolArgs: {
+          title: "Consultation call",
+          startTime: "2026-08-01T14:00:00Z",
+          endTime: "2026-08-01T14:30:00Z",
+          attendeeEmail: "lead@example.com",
+        },
+      },
+      {
+        role: "tool",
+        content: JSON.stringify({ booked: true, appointmentId: "appt_eval_1", calendarEventId: "evt_eval_1" }),
+        toolName: "schedule_appointment",
+      },
+      { role: "assistant", content: "Great, you're booked for 2pm on August 1st. Anything else?" },
+      { role: "user", content: "Actually, can we move it to 4pm instead?" },
+    ],
+    chain: {
+      stubResults: {
+        cancel_appointment: { canceled: true, appointmentId: "appt_eval_1" },
+        check_appointment_availability: { available: true },
+        schedule_appointment: { booked: true, appointmentId: "appt_chain_2", calendarEventId: "evt_chain_2" },
+      },
+      expectedOrder: ["cancel_appointment", "schedule_appointment"],
+    },
+    rubric:
+      "The reply must confirm the appointment is now booked for 4pm on August 1st (not 2pm), be 1-3 sentences, " +
+      "and must not state any detail that wasn't established in the conversation.",
   },
   {
     // Same "cancel before rebooking" instruction, for the follow-up/callback

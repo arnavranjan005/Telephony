@@ -10,31 +10,48 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// 429 is quota/rate-limit (retry after RetryInfo.retryDelay, parsed below).
-// 503 is the model being transiently overloaded ("high demand" - no
-// RetryInfo, falls back to exponential backoff) - both are worth retrying,
-// unlike a 400/permission error which would just repeat.
-function isRetryableError(error: unknown): boolean {
-  return error instanceof Error && /got status:\s*(429|503)/.test(error.message);
-}
-
-// @google/genai doesn't expose a structured status/retry-after field - it
-// bakes the whole JSON error body into Error.message as
-// `got status: 429 Too Many Requests. {...}`. Google's own RetryInfo.retryDelay
-// (e.g. "34s") in that body is a better wait than a guessed backoff.
-function parseSuggestedRetryDelayMs(message: string): number | null {
+// @google/genai's ApiError stringifies the raw error body straight into
+// Error.message (no "got status: ..." prefix). A 429's QuotaFailure.violations
+// carries a quotaId that says which cap was hit - parsed once and reused by
+// both isRetryableError and parseSuggestedRetryDelayMs below.
+function parseErrorBody(message: string): { error?: { details?: { ["@type"]?: string; retryDelay?: string; violations?: { quotaId?: string }[] }[] } } | null {
   const jsonStart = message.indexOf("{");
   if (jsonStart === -1) return null;
   try {
-    const body = JSON.parse(message.slice(jsonStart));
-    const details = (body?.error?.details ?? []) as { ["@type"]?: string; retryDelay?: string }[];
-    const retryInfo = details.find((d) => d["@type"] === "type.googleapis.com/google.rpc.RetryInfo");
-    if (!retryInfo?.retryDelay) return null;
-    const seconds = parseFloat(retryInfo.retryDelay.replace(/s$/, ""));
-    return Number.isFinite(seconds) ? seconds * 1000 : null;
+    return JSON.parse(message.slice(jsonStart));
   } catch {
     return null;
   }
+}
+
+// A "PerDay" quotaId (e.g. GenerateRequestsPerDayPerProjectPerModel-FreeTier) means the
+// daily cap is exhausted - no amount of waiting/retrying within this run will ever succeed,
+// unlike a per-minute cap which clears itself within seconds.
+function isDailyQuotaExhausted(message: string): boolean {
+  const details = parseErrorBody(message)?.error?.details ?? [];
+  const quotaFailure = details.find((d) => d["@type"] === "type.googleapis.com/google.rpc.QuotaFailure");
+  return Boolean((quotaFailure as { violations?: { quotaId?: string }[] } | undefined)?.violations?.some((v) => v.quotaId?.includes("PerDay")));
+}
+
+// 429 is quota/rate-limit (retry after RetryInfo.retryDelay, parsed below) unless it's a
+// daily-quota exhaustion, which is never worth retrying within the same run. 503 is the
+// model being transiently overloaded ("high demand" - no RetryInfo, falls back to
+// exponential backoff) - worth retrying, unlike a 400/permission error which would just repeat.
+function isRetryableError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const status = (error as { status?: number }).status;
+  if (status === 429) return !isDailyQuotaExhausted(error.message);
+  return status === 503;
+}
+
+// Google's own RetryInfo.retryDelay (e.g. "34s") in the error body is a better wait than a
+// guessed backoff.
+function parseSuggestedRetryDelayMs(message: string): number | null {
+  const details = parseErrorBody(message)?.error?.details ?? [];
+  const retryInfo = details.find((d) => d["@type"] === "type.googleapis.com/google.rpc.RetryInfo");
+  if (!retryInfo?.retryDelay) return null;
+  const seconds = parseFloat(retryInfo.retryDelay.replace(/s$/, ""));
+  return Number.isFinite(seconds) ? seconds * 1000 : null;
 }
 
 /**

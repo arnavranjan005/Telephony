@@ -1,4 +1,4 @@
-import { runConversationTurn } from "./conversationRunner";
+import { MAX_TOOL_ROUNDTRIPS, runConversationTurn } from "./conversationRunner";
 import { AIAgent, AgentMessage, AgentReply, ToolDefinition } from "./types";
 
 function makeAgent(replies: AgentReply[]): AIAgent {
@@ -112,7 +112,7 @@ describe("runConversationTurn", () => {
     const { finalReply } = await runConversationTurn(agent, [{ role: "user", content: "loop" }], tools);
 
     expect(finalReply).toMatch(/wasn't able to complete/i);
-    expect(agent.generateReply).toHaveBeenCalledTimes(4);
-    expect(handler).toHaveBeenCalledTimes(4);
+    expect(agent.generateReply).toHaveBeenCalledTimes(MAX_TOOL_ROUNDTRIPS);
+    expect(handler).toHaveBeenCalledTimes(MAX_TOOL_ROUNDTRIPS);
   });
 });
