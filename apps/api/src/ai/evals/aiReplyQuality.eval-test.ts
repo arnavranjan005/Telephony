@@ -22,7 +22,7 @@
 //   npm run eval:ai -- -t "booking chain via runConversationTurn"
 import { getAIAgent } from "../agentFactory";
 import { runConversationTurn } from "../conversationRunner";
-import { ToolDefinition } from "../types";
+import { AgentMessage, ToolDefinition } from "../types";
 import { EVAL_CASES } from "./cases";
 import { judgeReply } from "./judge";
 import { withRateLimit } from "./rateLimitedAgent";
@@ -47,7 +47,7 @@ function assertExpectedToolCall(expected: ExpectedToolCall, actualToolCalls: { n
 // unplanned record_sentiment) and isn't necessarily fine either (e.g. a surprise
 // cancel_appointment), so it's logged for a human to look at rather than silently ignored
 // or auto-failed.
-function logExtraToolCalls(caseName: string, extra: { name: string; args: Record<string, unknown> }[]) {
+function logExtraToolCalls(caseName: string, extra: unknown[]) {
   if (extra.length === 0) return;
   console.log(`[extra tool calls] "${caseName}": ${JSON.stringify(extra)}`);
 }
@@ -59,15 +59,44 @@ function findExtraToolCalls(
   return actual.filter((call) => !expected.some((exp) => exp.name === call.name && matchesExpectedArgs(exp.args ?? {}, call.args)));
 }
 
+interface ChainToolCall {
+  name: string;
+  args: Record<string, unknown>;
+  /** The stub handler's return value (parsed from the paired `role: "tool"` message), unlike
+   * the single-turn path where no handler ever runs so there's nothing to report. */
+  result: unknown;
+}
+
+// runConversationTurn pushes each tool call's `role: "tool"` result message immediately after
+// its `role: "assistant"` call message (see conversationRunner.ts), so they can be paired by position.
+function extractChainToolCalls(history: AgentMessage[]): ChainToolCall[] {
+  const calls: ChainToolCall[] = [];
+  for (let i = 0; i < history.length; i += 1) {
+    const message = history[i];
+    if (message.role !== "assistant" || !message.toolName) continue;
+    const resultMessage = history[i + 1];
+    let result: unknown = undefined;
+    if (resultMessage?.role === "tool" && resultMessage.toolName === message.toolName) {
+      try {
+        result = JSON.parse(resultMessage.content);
+      } catch {
+        result = resultMessage.content;
+      }
+    }
+    calls.push({ name: message.toolName, args: message.toolArgs ?? {}, result });
+  }
+  return calls;
+}
+
 // Checks `expectedOrder` occurs as a subsequence of `actualCalls`' tool names - extra/incidental
-// tool calls in between don't fail the chain, but are still returned with their args (see
-// logExtraToolCalls) rather than just their names.
+// tool calls in between don't fail the chain, but are still returned with their args and result
+// (see logExtraToolCalls) rather than just their names.
 function splitToolChain(
   expectedOrder: string[],
-  actualCalls: { name: string; args: Record<string, unknown> }[]
-): { matchedAll: boolean; actualOrder: string[]; extra: { name: string; args: Record<string, unknown> }[] } {
+  actualCalls: ChainToolCall[]
+): { matchedAll: boolean; actualOrder: string[]; extra: ChainToolCall[] } {
   let cursor = 0;
-  const extra: { name: string; args: Record<string, unknown> }[] = [];
+  const extra: ChainToolCall[] = [];
   for (const call of actualCalls) {
     if (cursor < expectedOrder.length && call.name === expectedOrder[cursor]) {
       cursor += 1;
@@ -96,9 +125,7 @@ describe("AI reply quality evals (real Gemini calls, LLM-as-judge for free text)
         }));
 
         const { history, finalReply } = await runConversationTurn(agent, evalCase.messages, stubbedTools, evalCase.systemPrompt);
-        const actualCalls = history
-          .filter((m) => m.role === "assistant" && m.toolName)
-          .map((m) => ({ name: m.toolName as string, args: m.toolArgs ?? {} }));
+        const actualCalls = extractChainToolCalls(history);
         const { matchedAll, actualOrder, extra } = splitToolChain(expectedOrder, actualCalls);
         logExtraToolCalls(evalCase.name, extra);
         if (!matchedAll) {
