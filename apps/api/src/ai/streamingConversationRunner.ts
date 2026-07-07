@@ -3,7 +3,10 @@ import { AIAgent, AgentMessage, ToolDefinition } from "./types";
 import { ROLE_TO_DB } from "../conversationHistory";
 import { callEventBus } from "../sse/eventBus";
 
-const MAX_TOOL_ROUNDTRIPS = 4;
+// A legitimate multi-step chain (e.g. cancel an old booking, check availability, book the new
+// slot) can need several roundtrips - this is a safety ceiling against a runaway loop (a model
+// stuck calling tools forever), not a budget for normal conversation, so it's set generously.
+const MAX_TOOL_ROUNDTRIPS = 8;
 
 export interface StreamingTurnContext {
   callId: string;
