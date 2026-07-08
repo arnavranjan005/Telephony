@@ -1,5 +1,5 @@
 import { env } from "@telephony/config";
-import { telnyxClient } from "./telnyxClient";
+import { telnyxClient, createScopedTelnyxClient } from "./telnyxClient";
 
 /** Opts a call into Telnyx's bidirectional Media Streaming (real-time barge-in mode). */
 export interface StreamingOptions {
@@ -23,7 +23,7 @@ export async function initiateOutboundCall(
   clientState?: Record<string, unknown>,
   streaming?: StreamingOptions
 ) {
-  const response = await telnyxClient.calls.create({
+  const response = await createScopedTelnyxClient().calls.create({
     connection_id: env.TELNYX_CONNECTION_ID,
     to: toNumber,
     from: env.TELNYX_FROM_NUMBER,

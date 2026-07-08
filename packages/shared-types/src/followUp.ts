@@ -2,6 +2,7 @@ import type { Lead } from "./lead";
 
 export type FollowUpStatus =
   | "PENDING"
+  | "WAITING_FOR_CALLING_HOURS"
   | "CALLING"
   | "COMPLETED"
   | "FAILED"

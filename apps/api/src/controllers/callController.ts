@@ -10,6 +10,7 @@ import {
   placeOutboundCall,
   finalizeDialOutcome,
   buildStreamUrl,
+  hangupCall,
 } from "@telephony/domain";
 import { verifyTelnyxSignature } from "../telnyx/webhookVerifier";
 import { handleCallerUtterance } from "../callConversationService";
@@ -193,6 +194,19 @@ export async function handleTelnyxWebhook(req: Request, res: Response) {
 
         callEventBus.publish(call.id, "call.transcript", { transcript });
         await handleCallerUtterance(callControlId, call.id, transcript);
+        break;
+      }
+
+      case "call.speak.ended": {
+        // Only relevant when the end_call tool flagged this call to end (see
+        // callControlTools.ts) - every other speak action (greetings, normal
+        // replies) is a no-op here. Waiting for the speak to actually finish
+        // (rather than hanging up right after issuing the speak command)
+        // means the model's own farewell line is never cut off mid-sentence.
+        const call = await prisma.call.findUnique({ where: { telnyxCallControlId: callControlId } });
+        if (call?.endCallRequested) {
+          await hangupCall(callControlId);
+        }
         break;
       }
 

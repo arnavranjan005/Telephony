@@ -1,7 +1,14 @@
 import type { Lead } from "./lead";
 
 export type CampaignStatus = "DRAFT" | "RUNNING" | "PAUSED" | "COMPLETED";
-export type CampaignContactStatus = "PENDING" | "CALLING" | "CALLED" | "FAILED" | "SKIPPED_DNC" | "SKIPPED_NO_CONSENT";
+export type CampaignContactStatus =
+  | "PENDING"
+  | "WAITING_FOR_CALLING_HOURS"
+  | "CALLING"
+  | "CALLED"
+  | "FAILED"
+  | "SKIPPED_DNC"
+  | "SKIPPED_NO_CONSENT";
 
 export interface Campaign {
   id: string;

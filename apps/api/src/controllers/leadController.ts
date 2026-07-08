@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { z } from "zod";
-import { prisma, LeadStatus } from "@telephony/database";
+import { prisma, LeadStatus, ConsentStatus, Prisma } from "@telephony/database";
 import { recordConsent, revokeConsent } from "@telephony/domain";
 import { callEventBus } from "../sse/eventBus";
 
@@ -11,15 +11,34 @@ const createLeadSchema = z.object({
   email: z.string().email().optional(),
   status: z.nativeEnum(LeadStatus).optional(),
   notes: z.string().optional(),
+  /** Grants TCPA consent as part of creation (single atomic write) rather
+   * than a separate follow-up call to the consent endpoint. */
+  consentGranted: z.boolean().optional(),
 });
 
 export async function createLead(req: Request, res: Response) {
   const parsed = createLeadSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const lead = await prisma.lead.create({ data: parsed.data });
-  callEventBus.publishGlobal("lead.created", { lead });
-  res.status(201).json({ lead });
+  const { consentGranted, ...fields } = parsed.data;
+
+  try {
+    const lead = await prisma.lead.create({
+      data: {
+        ...fields,
+        ...(consentGranted
+          ? { consentStatus: ConsentStatus.GRANTED, consentSource: "admin_panel", consentedAt: new Date() }
+          : {}),
+      },
+    });
+    callEventBus.publishGlobal("lead.created", { lead });
+    res.status(201).json({ lead });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return res.status(409).json({ error: "A lead with this phone number already exists" });
+    }
+    throw error;
+  }
 }
 
 export async function listLeads(req: Request, res: Response) {

@@ -11,7 +11,7 @@ worker, Prisma on Neon Postgres, a REST API, Server-Sent Events for live call
 updates, and a Next.js admin panel.
 
 This is a foundation to build on, not the full feature set described in the
-requirements doc (no sentiment logic yet — see "Not yet implemented" below).
+requirements doc.
 
 ## Monorepo layout (Nx)
 
@@ -109,13 +109,14 @@ and set that URL in the Telnyx portal.
 - `GET /api/calls` / `GET /api/calls/:callId` — list/inspect calls (includes conversation history)
 - `GET /api/calls/:callId/events` — SSE stream of call status + AI conversation turns
 - `POST /api/calls/webhook` — Telnyx webhook receiver (call.initiated/answered/transcription/hangup)
-- `POST /api/leads`, `GET /api/leads`, `GET /api/leads/:leadId`, `PATCH /api/leads/:leadId`, `DELETE /api/leads/:leadId`
+- `POST /api/leads` `{ firstName?, lastName?, phoneNumber, email?, status?, notes?, consentGranted? }` — `consentGranted` grants TCPA consent atomically in the same write (sets `consentStatus`/`consentSource: "admin_panel"`/`consentedAt` directly on create) rather than a separate follow-up call to the consent endpoint; a duplicate `phoneNumber` returns `409`, not a raw 500
+- `GET /api/leads`, `GET /api/leads/:leadId`, `PATCH /api/leads/:leadId`, `DELETE /api/leads/:leadId`
 - `POST /api/leads/:leadId/consent` `{ granted, source? }` — record or revoke TCPA consent for a lead; `consentedAt` is always set server-side
 - `GET /api/calendar/busy?timeMin=&timeMax=` — free/busy lookup
 - `POST /api/calendar/appointments` `{ title, startTime, endTime, leadId?, callId?, attendeeEmail? }` — book directly via REST
 - `GET /api/appointments`, `GET /api/appointments/:id`, `POST /api/appointments/:id/cancel`
 - `POST /api/campaigns` `{ name, script?, objectionPlaybook?, contacts: [{ leadId? | phoneNumber, firstName?, lastName? }] }` — create a campaign (upserts leads from phone numbers); `objectionPlaybook` is optional campaign-specific rebuttal guidance layered on top of the baseline objection-handling instruction every call already gets (see below)
-- `GET /api/campaigns`, `GET /api/campaigns/:id`, `POST /api/campaigns/:id/start`, `POST /api/campaigns/:id/pause` — the dial worker processes `PENDING` contacts of any `RUNNING` campaign automatically and marks it `COMPLETED` once none are left
+- `GET /api/campaigns`, `GET /api/campaigns/:id`, `POST /api/campaigns/:id/start`, `POST /api/campaigns/:id/pause` — the dial worker processes `PENDING` (and `WAITING_FOR_CALLING_HOURS`, see below) contacts of any `RUNNING` campaign automatically and marks it `COMPLETED` once none are left
 - `GET /api/campaigns/objection-baseline` — returns the baseline objection-handling instruction text every call gets by default (`OBJECTION_HANDLING_BASELINE`, `apps/api/src/callConversationService.ts`); used to display it in the admin panel's "New campaign" form so whoever writes `objectionPlaybook` can see what's already covered
 - `POST /api/followups` `{ leadId, scheduledAt, reason? }` — schedule a callback; the dial worker dials it automatically once due
 - `GET /api/followups`, `POST /api/followups/:id/cancel`
@@ -152,15 +153,19 @@ Built with shadcn/ui + Tailwind v4 (`npx shadcn@latest add ...`), typed
 against `@telephony/shared-types` throughout. Pages: a live-updating
 **Dashboard** (stat cards, a 14-day call-volume chart, a campaign-performance
 table, live call monitoring, and a live activity feed), **Calls** (log +
-transcript detail), **Leads** (list + status/consent/notes editing),
+transcript detail), **Leads** (list + status/consent/notes editing, plus a
+"New lead" form with an optional "grant TCPA consent now" toggle so a lead can
+be created and pre-consented in one atomic step, ready to call via a campaign
+or the manual outbound endpoint without a separate follow-up action),
 **Campaigns** (create, list, start/pause, per-campaign contact/performance
 detail, plus an optional objection-playbook field on the create form - which
 auto-displays the baseline objection-handling text every call already gets,
 fetched from `GET /api/campaigns/objection-baseline`, so it's clear what's
 already covered before adding campaign-specific detail), **Appointments**
-(list view and a calendar view), **Follow-ups**,
-and the **Do-Not-Call** list — each with cancel/create actions wired straight
-to the REST API.
+(list view and a calendar view), **Follow-ups** (schedule/cancel - a
+`WAITING_FOR_CALLING_HOURS` row, see below, is cancelable the same as
+`PENDING`), and the **Do-Not-Call** list — each with cancel/create actions
+wired straight to the REST API.
 
 Live updates come from a dashboard-wide SSE feed (`GET /api/events/stream`,
 `apps/api/src/sse/sseHandler.ts`'s `streamAllEvents`, consumed via
@@ -218,8 +223,20 @@ through an orchestrator (Nx, and potentially others) that forwards an existing
 
 If the call belongs to a campaign contact, the campaign's `script` is appended to the AI agent's
 system prompt for that call. The agent also has `add_to_dnc` (adds the caller to the DNC list the
-moment they ask to stop being contacted) and `schedule_followup` (books an automatic callback)
-tools available on every call, alongside the calendar and lead tools.
+moment they ask to stop being contacted), `schedule_followup` (books an automatic callback), and
+`end_call` (ends the call once the conversation has genuinely concluded) tools available on every
+call, alongside the calendar and lead tools.
+
+**Ending a call from the agent side**: `end_call` (`apps/api/src/ai/tools/callControlTools.ts`)
+doesn't hang up immediately - it only flags `Call.endCallRequested` and returns, so the model's own
+farewell line (its reply text for that same turn) is still generated and spoken in full before
+anything hangs up. The actual hangup happens after that speech finishes playing: on the legacy
+webhook path, `callController.ts`'s `call.speak.ended` case checks `endCallRequested` and calls
+`hangupCall`; on the streaming path, `CallStreamSession.handleTurnEnd` checks it right after
+`speak()` resolves, but only hangs up if `turnVersion` hasn't moved on since (a barge-in during the
+goodbye line means the caller wants to keep talking, so the call stays open). The system prompt
+instructs the agent to call `end_call` first and only speak its goodbye once it sees the tool
+result - the same call-then-confirm pattern as `schedule_appointment`/`schedule_followup`.
 
 `schedule_followup` validates the caller's requested time against the calling-hours window (see
 below) *before* writing anything: a request outside 8am-9pm local to the caller's number schedules
@@ -243,6 +260,20 @@ cancel on an already-canceled row is a no-op success, and canceling something al
 `cancelAppointmentById` additionally reverts its claim if the Google Calendar delete call fails, so a
 transient Google error can't leave an appointment marked canceled locally while still live on the
 real calendar.
+
+### Telnyx SDK gotcha: `calls.create` mutates the shared client
+
+`packages/domain/src/telnyx/telnyxClient.ts` exports a module-level `telnyxClient` singleton used
+for command actions (`answerCall`, `speakText`, `startTranscription`, `hangupCall`), plus a
+`createScopedTelnyxClient()` factory. `initiateOutboundCall` uses the factory, not the singleton,
+because the `telnyx` SDK's `calls.create`/`calls.retrieve` mutate their `Telnyx` instance's
+`calls` object in place, rebinding its `answer`/`hangup`/`speak`/etc. methods to whichever call was
+just created/retrieved (see `addResourceToResponseData` in `telnyx/dist/utils.js`). Calling
+`initiateOutboundCall` on the shared `telnyxClient` would poison it: the next
+`telnyxClient.calls.answer(id, ...)` on the shared instance picks up a stale extra bound argument
+and throws "Unknown arguments". Any code that creates or retrieves a call needs its own throwaway
+client (`createScopedTelnyxClient()`) for that one call so the shared instance used for command
+actions elsewhere is never touched.
 
 ## Real-time media streaming (barge-in) — the default calling path, `apps/api/src/media-stream/`
 
@@ -319,25 +350,28 @@ what makes it a real distributed system: run as many worker instances as you wan
 during a campaign push), and none of them will double-dial the same row.
 
 - **Producers**: `followUpService.createFollowUp` (in `packages/domain`) enqueues a delayed job
-  (`delay = scheduledAt - now`); `campaignService.startCampaign` enqueues one job per `PENDING`
-  contact immediately. Every job uses a **deterministic BullMQ job ID** (`followup-<id>` /
-  `campaign-contact-<id>`), so re-enqueueing the same row (e.g. from the reconciliation sweep below)
-  is a no-op instead of a duplicate job.
+  (`delay = scheduledAt - now`); `campaignService.startCampaign` enqueues one job per `PENDING` (or
+  `WAITING_FOR_CALLING_HOURS`, see below) contact immediately. Every job uses a **deterministic BullMQ
+  job ID** (`followup-<id>` / `campaign-contact-<id>`), so re-enqueueing the same row (e.g. from the
+  reconciliation sweep below) is a no-op instead of a duplicate job.
 - **Consumer**: `apps/worker/src/worker.ts` runs a BullMQ `Worker` with a rate limiter
   (`DIAL_RATE_LIMIT_MAX` jobs per `DIAL_RATE_LIMIT_DURATION_MS`, default 5/sec) so Telnyx never gets
   bursted regardless of how many jobs land at once.
 - **Distributed consistency**: BullMQ's own per-job lock already stops two workers from processing the
   same job concurrently, but the authoritative guard is a **database compare-and-swap** in
   `followUpService.processFollowUpJob` / `campaignService.processCampaignContactJob` (both in
-  `packages/domain`) — an atomic `updateMany({ where: { id, status: "PENDING" }, data: { status:
-  "CALLING" } })`. Postgres row locking guarantees only one caller ever sees `count === 1` for a given
-  row, so even a job retried after a worker crash, or a row re-enqueued by the reconciliation sweep,
-  can never be dialed twice.
+  `packages/domain`) — an atomic `updateMany({ where: { id, status: { in: ["PENDING",
+  "WAITING_FOR_CALLING_HOURS"] } }, data: { status: "CALLING" } })`. Postgres row locking guarantees
+  only one caller ever sees `count === 1` for a given row, so even a job retried after a worker crash,
+  or a row re-enqueued by the reconciliation sweep, can never be dialed twice.
 - **Reconciliation**: on startup, `apps/worker` calls `reconcilePendingWork()`
-  (`packages/queue/src/reconciliation.ts`), which re-enqueues every DB row still `PENDING` — safe
-  because of the deterministic job IDs above. This self-heals if Redis was flushed/evicted (a real
-  possibility on Aiven's free tier) or if rows were created while no worker was running; the database
-  is the source of truth, the queue is derived from it.
+  (`packages/queue/src/reconciliation.ts`), which re-enqueues every DB row still `PENDING` or
+  `WAITING_FOR_CALLING_HOURS` — safe because of the deterministic job IDs above (a
+  `WAITING_FOR_CALLING_HOURS` row's own delayed retry job lives under a different, timestamp-suffixed
+  ID, so this re-enqueues it under the plain deterministic one instead; harmless duplication, since the
+  real dedup guarantee is the atomic status claim above, not the job ID). This self-heals if Redis was
+  flushed/evicted (a real possibility on Aiven's free tier) or if rows were created while no worker was
+  running; the database is the source of truth, the queue is derived from it.
 - Both job types dial through `packages/domain/src/outboundDialService.ts`, the same path used by
   the manual `POST /api/calls/outbound` endpoint — every outbound call, however it originates, checks
   the DNC list first and is skipped (marked `SKIPPED_DNC`) if the number is listed. Campaign and
@@ -357,21 +391,27 @@ endpoint, which a human explicitly triggers per call):
   `consentStatus` (`UNKNOWN` by default, `GRANTED`, or `REVOKED`), a `consentSource`, and a
   `consentedAt` timestamp. `POST /api/leads/:leadId/consent` `{ granted, source? }` records or revokes
   it — `consentedAt` is always set server-side at the moment it changes, not from client input, so it's
-  a reliable audit trail. `outboundDialService.placeOutboundCall` takes a `requireConsent` option;
-  `campaignService`/`followUpService` pass it, so a lead without `GRANTED` consent is skipped
-  (`SKIPPED_NO_CONSENT`) instead of dialed.
+  a reliable audit trail. A lead can also be pre-consented at creation time via `POST /api/leads`'s
+  `consentGranted` flag (see API overview above), in the same atomic write. `outboundDialService.
+  placeOutboundCall` takes a `requireConsent` option; `campaignService`/`followUpService` pass it, so a
+  lead without `GRANTED` consent is skipped (`SKIPPED_NO_CONSENT`) instead of dialed. Note this only
+  gates *outbound* automated dialing - an inbound call is always answered regardless of consent status,
+  since TCPA consent governs a business auto-dialing a consumer, not the other way around.
 - **Calling hours** (`packages/domain/src/compliance/callingHours.ts`) — 47 CFR 64.1200(a)(3): no
   calls before 8am or after 9pm in the *called number's* local time. The called number's area code is
   mapped to an IANA time zone via a built-in NANP table (`compliance/areaCodeTimezones.ts`); numbers
   with an unrecognized area code (including non-NANP/international numbers) have no determinable local
   time and are treated as unrestricted rather than blocked. Unlike DNC/consent, this is a *when* rather
   than a *whether*: `processCampaignContactJob`/`processFollowUpJob` check it before dialing, and if
-  it's currently outside the window, give the row's claim back to `PENDING` and reschedule the dial for
-  the next legal window (`nextCallingWindowStart`) instead of finalizing any terminal status.
+  it's currently outside the window, set the row's status to `WAITING_FOR_CALLING_HOURS` (a distinct
+  status from `PENDING`, surfaced in the admin panel with its own badge, so a deferred contact/follow-up
+  isn't indistinguishable from one that's never been attempted) and reschedule the dial for the next
+  legal window (`nextCallingWindowStart`) instead of finalizing any terminal status. Every place that
+  claims/re-enqueues/cancels a `PENDING` row (see the distributed-dialing section above and "Follow-ups"
+  under Admin panel) treats `WAITING_FOR_CALLING_HOURS` the same way.
 
-Both checks are heuristics, not full compliance coverage — see "Not yet implemented" below for what's
-still missing (National DNC Registry scrubbing, litigator-list scrubbing, per-number call-frequency
-caps, state-specific rules).
+Both checks are heuristics, not full compliance coverage — still missing: National DNC Registry
+scrubbing, litigator-list scrubbing, per-number call-frequency caps, and state-specific rules.
 
 ### Redis setup (Aiven free tier)
 
@@ -391,9 +431,12 @@ multiple writes, or an external call plus a DB write, get explicit handling:
 - **`calendarController.bookAppointment`** creates the Google Calendar event, then the `Appointment`
   row; if the DB write fails, it compensates by deleting the just-created Google event rather than
   leaving an orphaned booking the app has no record of.
-- **Campaign completion** (`processCampaignContactJob`) and the **PENDING → CALLING claim** on both
-  `FollowUp` and `CampaignContact` are both conditional `updateMany` calls, so concurrent callers
-  never conflict — see the distributed-dialing section above.
+- **Campaign completion** (`processCampaignContactJob`) and the **PENDING/WAITING_FOR_CALLING_HOURS →
+  CALLING claim** on both `FollowUp` and `CampaignContact` are both conditional `updateMany` calls, so
+  concurrent callers never conflict — see the distributed-dialing section above.
+- **`POST /api/leads`**'s optional `consentGranted` flag sets `consentStatus`/`consentSource`/
+  `consentedAt` in the same `prisma.lead.create` call rather than a separate follow-up write - a lead is
+  created either already consented or not, never in a briefly-inconsistent in-between state.
 - **`DELETE /api/leads/:leadId`** uses `deleteMany` (not `delete`), and **`POST /api/appointments/:id/cancel`**
   short-circuits if the appointment is already `CANCELED` — repeating either call on an
   already-completed resource returns the same success response instead of a 404/500 on the retry.
@@ -424,82 +467,6 @@ Endpoints that are already naturally idempotent (`GET`s, `PATCH /api/leads/:lead
 which upserts, `DELETE /api/dnc/:phoneNumber`, campaign `start`/`pause` which just flip a status flag)
 don't need this and don't have it applied. There's no cleanup job for old `IdempotencyKey` rows yet —
 fine at this scale, but worth a TTL sweep if this sees real traffic.
-
-## Not yet implemented
-
-The full requirements doc describes a much larger system. Live call monitoring and a Google Calendar
-view for appointments (both previously listed here) are now implemented - see the "Admin panel"
-section above. What's genuinely still missing:
-
-- **Sentiment analysis / retention ("save") logic** - partially addressed: `record_sentiment`
-  (`apps/api/src/ai/tools/sentimentTools.ts`) lets the agent log a tone/mood shift (positive/neutral/
-  negative/very_negative) as it notices one during the call, and the tool result folds back into the
-  same turn's conversation history so the agent's own next reply is already conditioned on it (e.g.
-  softening tone after a negative reading) - no separate classifier call, no added latency. The
-  system prompt instructs the agent to call it every time it notices a shift, not just once. What's
-  still missing: this is discretionary (the agent decides when to call it, same as `update_lead_status`
-  - there's no guaranteed-detection backstop independent of the LLM's own judgment), it isn't persisted
-  anywhere beyond the conversation transcript (no `Call.sentiment` field, no dashboard surfacing), and
-  it deliberately does **not** feed into `add_to_dnc` automatically - inferred mood alone shouldn't
-  trigger an opt-out; `add_to_dnc`'s own trigger condition was separately widened to catch an
-  *implicit* opt-out ("just leave me alone," not just "stop calling me"), which is the more accurate
-  fix for that gap than wiring mood into it.
-- **Objection handling** - partially addressed: `buildSystemPrompt` (`apps/api/src/callConversationService.ts`)
-  gives every call a baseline instruction to acknowledge and honestly address objections (price, timing,
-  "not interested," etc.) without inventing facts, and to weigh how hard to push a rebuttal against the
-  caller's most recently recorded sentiment (drop it entirely if sentiment is `very_negative`). Campaigns
-  can optionally layer a `Campaign.objectionPlaybook` field (same opt-in pattern as `script`, settable from
-  the admin panel's "New campaign" form) with product-specific rebuttals - most campaigns won't need one,
-  since the baseline covers generic objections. What's still missing: there's no scripted decision-tree/
-  branching engine or dedicated objection-*detection* logic separate from the LLM's own judgment - it's
-  layered system-prompt text, not an "agent-assist" style flow with structured branches.
-- **Inbound call routing by intent** - every inbound call is answered and handled end-to-end by the
-  same AI agent; there's no transfer/escalation to a human or routing to different
-  departments/queues based on detected intent.
-- **Paralinguistic voice realism** - partially addressed: `VERBAL_FILLER_GUIDANCE`
-  (`apps/api/src/callConversationService.ts`, folded into `SYSTEM_PROMPT`) instructs the agent to
-  occasionally write a natural filler ("um," "uh") or brief self-correction into its own reply text,
-  the way a real person talks rather than reading a script - at most one per reply, and skipped
-  entirely when stating something the caller needs to get right the first time (appointment times,
-  phone numbers, prices). Since fillers are genuine spoken words, they're written into the same reply
-  text that's both synthesized by TTS and persisted/displayed in the transcript - no separate markup,
-  no code change beyond the prompt. What's still missing: breathing sounds and human-like pacing.
-  ElevenLabs *does* support real SSML `<break time="x.xs" />` pause tags (confirmed via their docs -
-  works on `eleven_flash_v2_5`, the model this app uses, gated behind `enable_ssml_parsing: true`;
-  Eleven V3 is the exception that doesn't support them), but that's deliberately not implemented yet -
-  the right design is code-level injection into a separate TTS-only copy of the text (based on
-  punctuation), not the LLM writing raw tags into its own reply, since that reply string is also what
-  gets persisted/shown in the transcript and a literal `<break time="0.3s" />` would look broken there.
-  Actual breath-sound audio isn't available via SSML at all on this model - it's an Eleven v3-only
-  proprietary bracket-tag feature (`[breathes]`, `[sighs]`), a different, still-experimental model from
-  the one this app uses today.
-- **Preferred tech stack (Siphon/Dograh) not used** - both are orchestration/self-hosting layers, not
-  replacements for STT/TTS/LLM/telephony themselves (they let you bring your own provider, or swap to
-  fully self-hosted open models, e.g. local Whisper/a local LLM/open TTS). This app already avoids the
-  Vapi/n8n markup layer the client explicitly ruled out - it talks to Telnyx/Deepgram/ElevenLabs/Gemini
-  directly, no platform fee stacked on top. What it's missing relative to Siphon/Dograh specifically:
-  no provider abstraction/BYOK config to swap in cheaper or fully self-hosted models (Deepgram/
-  ElevenLabs/Gemini are hardcoded, so there's no path to near-zero marginal cost the way a self-hosted
-  Whisper/local-LLM/open-TTS stack would give), Dograh's visual workflow builder, and MCP-native tool
-  calling. Telephony-carrier minutes (Telnyx or any equivalent) and LLM/STT/TTS usage are real,
-  unavoidable costs regardless of which of these tools sits on top - no open-source layer removes them.
-
-Real-time bidirectional media streaming with barge-in is now implemented and is the default calling
-path (see the section above), and TTS synthesis itself now streams (ElevenLabs' `/stream` endpoint,
-consumed chunk-by-chunk as audio is generated). Per-campaign/per-follow-up opt-out of streaming is
-already supported (`streamingEnabled` on `Campaign`/`FollowUp`); "per-DID" granularity doesn't apply
-yet since the app only supports a single `TELNYX_FROM_NUMBER` - no multi-number support. Still
-missing: streaming/incremental LLM output (the full reply text is sent to ElevenLabs in one request,
-so a fully streaming LLM → streaming TTS pipeline isn't there yet) and a multi-vendor STT/TTS
-abstraction (Deepgram/ElevenLabs are hardcoded, not swappable). Both are natural next increments on
-the same foundation.
-
-TCPA compliance is partial (see the section above for what's covered - consent tracking and calling
-hours). Still missing: National DNC Registry scrubbing (the FCC's registry, distinct from this app's
-internal opt-out list, requires a paid SAN/API subscription), litigator-list scrubbing, per-number
-call-frequency caps, an automatic retry/re-contact policy for busy/no-answer outcomes (today those are
-just recorded, not re-queued), and state-specific "mini-TCPA" rules layered on top of the federal
-baseline.
 
 ## Scripts (run from the repo root)
 

@@ -26,6 +26,7 @@ const STATUS_STYLES: Record<string, string> = {
   PAUSED: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
   // campaign contacts / follow-ups
   PENDING: "bg-muted text-muted-foreground",
+  WAITING_FOR_CALLING_HOURS: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
   CALLING: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
   CALLED: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
   SKIPPED_DNC: "bg-destructive/10 text-destructive",
