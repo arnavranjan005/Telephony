@@ -80,7 +80,10 @@ export async function startCampaign(id: string) {
   const campaign = await prisma.campaign.update({ where: { id }, data: { status: CampaignStatus.RUNNING } });
 
   const pendingContacts = await prisma.campaignContact.findMany({
-    where: { campaignId: id, status: CampaignContactStatus.PENDING },
+    where: {
+      campaignId: id,
+      status: { in: [CampaignContactStatus.PENDING, CampaignContactStatus.WAITING_FOR_CALLING_HOURS] },
+    },
     select: { id: true },
   });
   await Promise.all(pendingContacts.map((contact) => enqueueCampaignContactDial(contact.id)));
@@ -93,13 +96,17 @@ export async function pauseCampaign(id: string) {
 }
 
 /**
- * Marks the campaign COMPLETED once it has no PENDING contacts left. Uses a
- * conditional update (only flips RUNNING -> COMPLETED) so redundant calls
- * from multiple concurrent job finalizers are harmless.
+ * Marks the campaign COMPLETED once it has no PENDING (or still-waiting-on-
+ * calling-hours) contacts left. Uses a conditional update (only flips
+ * RUNNING -> COMPLETED) so redundant calls from multiple concurrent job
+ * finalizers are harmless.
  */
 async function completeCampaignIfExhausted(campaignId: string) {
   const remaining = await prisma.campaignContact.count({
-    where: { campaignId, status: CampaignContactStatus.PENDING },
+    where: {
+      campaignId,
+      status: { in: [CampaignContactStatus.PENDING, CampaignContactStatus.WAITING_FOR_CALLING_HOURS] },
+    },
   });
   if (remaining === 0) {
     await prisma.campaign.updateMany({
@@ -111,20 +118,21 @@ async function completeCampaignIfExhausted(campaignId: string) {
 
 /**
  * Processes one campaign-contact dial job. Atomically claims the row
- * (PENDING -> CALLING via a conditional UPDATE) before dialing, so if two
- * workers race on the same row - or the reconciliation sweep re-enqueues a
- * row something else already claimed - only one of them actually dials. The
- * claim also requires the campaign to still be RUNNING, so pausing a
- * campaign actually stops its still-queued contacts from being dialed
- * instead of just relabeling the campaign row - they stay PENDING and get
- * picked up again the next time the campaign is started.
+ * (PENDING/WAITING_FOR_CALLING_HOURS -> CALLING via a conditional UPDATE)
+ * before dialing, so if two workers race on the same row - or the
+ * reconciliation sweep re-enqueues a row something else already claimed -
+ * only one of them actually dials. The claim also requires the campaign to
+ * still be RUNNING, so pausing a campaign actually stops its still-queued
+ * contacts from being dialed instead of just relabeling the campaign row -
+ * they stay claimable and get picked up again the next time the campaign is
+ * started.
  * Called by the worker; safe to call multiple times for the same id.
  */
 export async function processCampaignContactJob(campaignContactId: string): Promise<void> {
   const claimed = await prisma.campaignContact.updateMany({
     where: {
       id: campaignContactId,
-      status: CampaignContactStatus.PENDING,
+      status: { in: [CampaignContactStatus.PENDING, CampaignContactStatus.WAITING_FOR_CALLING_HOURS] },
       campaign: { status: CampaignStatus.RUNNING },
     },
     data: { status: CampaignContactStatus.CALLING, attemptedAt: new Date() },
@@ -139,11 +147,12 @@ export async function processCampaignContactJob(campaignContactId: string): Prom
   // TCPA calling-hours (8am-9pm local to the number) is a *when*, not a
   // *whether* - give the claim back instead of finalizing a terminal status,
   // and reschedule for the next legal window rather than dropping the
-  // contact.
+  // contact. Distinct from PENDING so the admin panel can show this contact
+  // is genuinely waiting on its calling window, not just never attempted.
   if (!isWithinCallingHours(contact.lead.phoneNumber)) {
     await prisma.campaignContact.update({
       where: { id: campaignContactId },
-      data: { status: CampaignContactStatus.PENDING },
+      data: { status: CampaignContactStatus.WAITING_FOR_CALLING_HOURS },
     });
     await enqueueCampaignContactDialAt(campaignContactId, nextCallingWindowStart(contact.lead.phoneNumber));
     return;

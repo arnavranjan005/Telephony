@@ -24,7 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 
-const CANCELABLE = new Set(["PENDING"]);
+const CANCELABLE = new Set(["PENDING", "WAITING_FOR_CALLING_HOURS"]);
 
 export default function FollowUpsPage() {
   const [followUps, setFollowUps] = useState<FollowUpWithLead[] | null>(null);

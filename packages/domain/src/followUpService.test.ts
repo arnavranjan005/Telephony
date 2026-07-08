@@ -20,6 +20,7 @@ jest.mock("@telephony/database", () => ({
   },
   FollowUpStatus: {
     PENDING: "PENDING",
+    WAITING_FOR_CALLING_HOURS: "WAITING_FOR_CALLING_HOURS",
     CALLING: "CALLING",
     SKIPPED_DNC: "SKIPPED_DNC",
     SKIPPED_NO_CONSENT: "SKIPPED_NO_CONSENT",
@@ -100,7 +101,7 @@ describe("followUpService", () => {
       await processFollowUpJob("fu_1");
 
       expect(followUpUpdateMany).toHaveBeenCalledWith({
-        where: { id: "fu_1", status: "PENDING" },
+        where: { id: "fu_1", status: { in: ["PENDING", "WAITING_FOR_CALLING_HOURS"] } },
         data: { status: "CALLING" },
       });
       expect(placeOutboundCall).toHaveBeenCalledWith("+15551234567", "lead_1", {
@@ -179,7 +180,7 @@ describe("followUpService", () => {
       expect(followUpUpdate).toHaveBeenCalledWith({ where: { id: "fu_1" }, data: { status: "SKIPPED_NO_CONSENT" } });
     });
 
-    it("outside the legal calling window: gives the claim back to PENDING and reschedules for the next window instead of dialing", async () => {
+    it("outside the legal calling window: marks WAITING_FOR_CALLING_HOURS and reschedules for the next window instead of dialing", async () => {
       followUpUpdateMany.mockResolvedValue({ count: 1 });
       followUpFindUniqueOrThrow.mockResolvedValue({
         id: "fu_1",
@@ -193,7 +194,10 @@ describe("followUpService", () => {
       await processFollowUpJob("fu_1");
 
       expect(placeOutboundCall).not.toHaveBeenCalled();
-      expect(followUpUpdate).toHaveBeenCalledWith({ where: { id: "fu_1" }, data: { status: "PENDING" } });
+      expect(followUpUpdate).toHaveBeenCalledWith({
+        where: { id: "fu_1" },
+        data: { status: "WAITING_FOR_CALLING_HOURS" },
+      });
       expect(enqueueFollowUpDialAt).toHaveBeenCalledWith("fu_1", nextWindow);
     });
 
@@ -244,7 +248,7 @@ describe("followUpService", () => {
       const result = await cancelFollowUp("fu_1");
 
       expect(followUpUpdateMany).toHaveBeenCalledWith({
-        where: { id: "fu_1", status: "PENDING" },
+        where: { id: "fu_1", status: { in: ["PENDING", "WAITING_FOR_CALLING_HOURS"] } },
         data: { status: "CANCELED" },
       });
       expect(removeFollowUpDialJobs).toHaveBeenCalledWith("fu_1");
@@ -305,7 +309,7 @@ describe("followUpService", () => {
 
       expect(id).toBe("fu_scoped");
       expect(followUpFindFirst).toHaveBeenCalledWith({
-        where: { leadId: "lead_1", callId: "call_1", status: "PENDING" },
+        where: { leadId: "lead_1", callId: "call_1", status: { in: ["PENDING", "WAITING_FOR_CALLING_HOURS"] } },
         orderBy: { createdAt: "desc" },
       });
     });
@@ -317,7 +321,7 @@ describe("followUpService", () => {
 
       expect(id).toBe("fu_fallback");
       expect(followUpFindFirst).toHaveBeenLastCalledWith({
-        where: { leadId: "lead_1", status: "PENDING" },
+        where: { leadId: "lead_1", status: { in: ["PENDING", "WAITING_FOR_CALLING_HOURS"] } },
         orderBy: { createdAt: "desc" },
       });
     });

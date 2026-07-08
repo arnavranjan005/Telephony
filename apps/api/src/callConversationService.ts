@@ -8,6 +8,7 @@ import { buildLeadTools } from "./ai/tools/leadTools";
 import { buildComplianceTools } from "./ai/tools/complianceTools";
 import { buildFollowUpTools } from "./ai/tools/followUpTools";
 import { buildSentimentTools } from "./ai/tools/sentimentTools";
+import { buildCallControlTools } from "./ai/tools/callControlTools";
 import { callEventBus } from "./sse/eventBus";
 import { ROLE_TO_DB, loadHistory } from "./conversationHistory";
 
@@ -56,6 +57,13 @@ schedule_appointment or schedule_followup - don't leave conflicting actions in p
 Whenever you notice a shift in the caller's tone or mood (e.g. growing frustrated, upset, or notably
 pleased), call record_sentiment to note it - every time it changes, not just once - and let it guide
 how you say your next line.
+Once the conversation has genuinely concluded - the caller says goodbye, confirms they have nothing else
+to discuss, or asks to end the call, or you've just finished wrapping up (e.g. right after booking an
+appointment and confirming it back to them) - call end_call, then say your brief, natural goodbye as your
+reply once you see the tool result (the same pattern as schedule_appointment/schedule_followup above: the
+tool call comes first, your spoken line confirming it comes after). Don't just stop replying and leave the
+call sitting open, and don't call end_call while the caller is still mid-thought or the conversation is
+otherwise active.
 ${OBJECTION_HANDLING_BASELINE}
 ${VERBAL_FILLER_GUIDANCE}`;
 
@@ -127,6 +135,7 @@ export async function handleCallerUtterance(
       streamingEnabled: call?.streamingEnabled,
     }),
     ...buildSentimentTools(),
+    ...buildCallControlTools({ callId }),
   ];
 
   const systemPrompt = buildSystemPrompt(call?.campaignContact?.campaign);

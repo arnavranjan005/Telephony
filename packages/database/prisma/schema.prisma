@@ -63,6 +63,7 @@ enum CampaignStatus {
 
 enum CampaignContactStatus {
   PENDING
+  WAITING_FOR_CALLING_HOURS
   CALLING
   CALLED
   FAILED
@@ -72,6 +73,7 @@ enum CampaignContactStatus {
 
 enum FollowUpStatus {
   PENDING
+  WAITING_FOR_CALLING_HOURS
   CALLING
   COMPLETED
   FAILED
@@ -120,6 +122,7 @@ model Call {
   outcome           String?
   recordingUrl      String?
   streamingEnabled  Boolean       @default(true)
+  endCallRequested  Boolean       @default(false)
 
   leadId   String?
   lead     Lead?   @relation(fields: [leadId], references: [id])

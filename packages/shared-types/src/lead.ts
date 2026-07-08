@@ -35,6 +35,9 @@ export const createLeadSchema = z.object({
   email: z.string().email().optional(),
   status: z.enum(LeadStatusValues).optional(),
   notes: z.string().optional(),
+  /** Grants TCPA consent as part of creation (single atomic write) rather
+   * than a separate follow-up call to the consent endpoint. */
+  consentGranted: z.boolean().optional(),
 });
 export type CreateLeadInput = z.infer<typeof createLeadSchema>;
 

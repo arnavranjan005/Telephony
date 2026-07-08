@@ -9,6 +9,15 @@ import { StatusBadge } from "@/components/status-badge";
 import { formatDateTime } from "@/lib/format";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
@@ -17,6 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import { Plus } from "lucide-react";
 
 const STATUS_TABS: Array<LeadStatus | "ALL"> = ["ALL", "COLD", "WARM", "HOT"];
 
@@ -25,6 +35,7 @@ export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const load = useCallback(() => {
     apiClient
@@ -49,9 +60,19 @@ export default function LeadsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Leads</h1>
-        <p className="text-sm text-muted-foreground">Every contact tracked by the platform, with status and consent.</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Leads</h1>
+          <p className="text-sm text-muted-foreground">Every contact tracked by the platform, with status and consent.</p>
+        </div>
+        <CreateLeadDialog
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          onCreated={() => {
+            setCreateOpen(false);
+            load();
+          }}
+        />
       </div>
 
       <Tabs value={filter} onValueChange={(value) => setFilter(value as LeadStatus | "ALL")}>
@@ -103,6 +124,95 @@ export default function LeadsPage() {
 
       <LeadDetailSheet leadId={selectedLeadId} onClose={() => setSelectedLeadId(null)} onChanged={load} />
     </div>
+  );
+}
+
+function CreateLeadDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: () => void;
+}) {
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [consentGranted, setConsentGranted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  function reset() {
+    setFirstName("");
+    setLastName("");
+    setPhoneNumber("");
+    setConsentGranted(false);
+  }
+
+  async function submit() {
+    if (!phoneNumber.trim()) {
+      toast.error("Phone number is required");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await apiClient.createLead({
+        firstName: firstName || undefined,
+        lastName: lastName || undefined,
+        phoneNumber: phoneNumber.trim(),
+        consentGranted: consentGranted || undefined,
+      });
+      toast.success("Lead created");
+      reset();
+      onCreated();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create lead");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogTrigger render={<Button />}>
+        <Plus /> New lead
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>New lead</DialogTitle>
+          <DialogDescription>Add a contact so it's ready to call - via a campaign or one-off.</DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label>First name</Label>
+              <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Jane" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label>Last name</Label>
+              <Input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Doe" />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Phone number</Label>
+            <Input value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="+15551234567" />
+          </div>
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <div>
+              <p className="text-sm font-medium">Grant TCPA consent now</p>
+              <p className="text-xs text-muted-foreground">Required before this lead can be dialed automatically</p>
+            </div>
+            <Switch checked={consentGranted} onCheckedChange={setConsentGranted} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button onClick={submit} disabled={submitting}>
+            Create lead
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

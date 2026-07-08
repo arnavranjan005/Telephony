@@ -44,6 +44,7 @@ jest.mock("@telephony/database", () => ({
   CampaignStatus: { DRAFT: "DRAFT", RUNNING: "RUNNING", PAUSED: "PAUSED", COMPLETED: "COMPLETED" },
   CampaignContactStatus: {
     PENDING: "PENDING",
+    WAITING_FOR_CALLING_HOURS: "WAITING_FOR_CALLING_HOURS",
     CALLING: "CALLING",
     CALLED: "CALLED",
     FAILED: "FAILED",
@@ -200,7 +201,7 @@ describe("campaignService", () => {
       await processCampaignContactJob("cc_1");
 
       expect(campaignContactUpdateMany).toHaveBeenCalledWith({
-        where: { id: "cc_1", status: "PENDING", campaign: { status: "RUNNING" } },
+        where: { id: "cc_1", status: { in: ["PENDING", "WAITING_FOR_CALLING_HOURS"] }, campaign: { status: "RUNNING" } },
         data: { status: "CALLING", attemptedAt: expect.any(Date) },
       });
       expect(campaignContactUpdate).toHaveBeenCalledWith({ where: { id: "cc_1" }, data: { callId: "call_1" } });
@@ -249,7 +250,7 @@ describe("campaignService", () => {
       await processCampaignContactJob("cc_1");
 
       expect(campaignContactUpdateMany).toHaveBeenCalledWith({
-        where: { id: "cc_1", status: "PENDING", campaign: { status: "RUNNING" } },
+        where: { id: "cc_1", status: { in: ["PENDING", "WAITING_FOR_CALLING_HOURS"] }, campaign: { status: "RUNNING" } },
         data: { status: "CALLING", attemptedAt: expect.any(Date) },
       });
       expect(campaignContactFindUniqueOrThrow).not.toHaveBeenCalled();
@@ -313,7 +314,7 @@ describe("campaignService", () => {
       });
     });
 
-    it("outside the legal calling window: gives the claim back to PENDING and reschedules for the next window instead of dialing", async () => {
+    it("outside the legal calling window: marks WAITING_FOR_CALLING_HOURS and reschedules for the next window instead of dialing", async () => {
       campaignContactUpdateMany.mockResolvedValue({ count: 1 });
       campaignContactFindUniqueOrThrow.mockResolvedValue({
         id: "cc_1",
@@ -329,7 +330,10 @@ describe("campaignService", () => {
       await processCampaignContactJob("cc_1");
 
       expect(placeOutboundCall).not.toHaveBeenCalled();
-      expect(campaignContactUpdate).toHaveBeenCalledWith({ where: { id: "cc_1" }, data: { status: "PENDING" } });
+      expect(campaignContactUpdate).toHaveBeenCalledWith({
+        where: { id: "cc_1" },
+        data: { status: "WAITING_FOR_CALLING_HOURS" },
+      });
       expect(enqueueCampaignContactDialAt).toHaveBeenCalledWith("cc_1", nextWindow);
       expect(campaignContactCount).not.toHaveBeenCalled(); // not exhausted-checked; the contact isn't done, just deferred
     });

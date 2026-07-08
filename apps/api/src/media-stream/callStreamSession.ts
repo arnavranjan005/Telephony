@@ -1,4 +1,5 @@
 import { prisma, CallDirection } from "@telephony/database";
+import { hangupCall } from "@telephony/domain";
 import { getAIAgent } from "../ai/agentFactory";
 import { runStreamingConversationTurn, StreamingTurnContext } from "../ai/streamingConversationRunner";
 import { AgentMessage, ToolDefinition } from "../ai/types";
@@ -7,6 +8,7 @@ import { buildLeadTools } from "../ai/tools/leadTools";
 import { buildComplianceTools } from "../ai/tools/complianceTools";
 import { buildFollowUpTools } from "../ai/tools/followUpTools";
 import { buildSentimentTools } from "../ai/tools/sentimentTools";
+import { buildCallControlTools } from "../ai/tools/callControlTools";
 import { loadHistory, ROLE_TO_DB } from "../conversationHistory";
 import { SYSTEM_PROMPT, buildSystemPrompt } from "../callConversationService";
 import { callEventBus } from "../sse/eventBus";
@@ -67,6 +69,7 @@ export class CallStreamSession {
         streamingEnabled: call?.streamingEnabled,
       }),
       ...buildSentimentTools(),
+      ...buildCallControlTools({ callId: this.options.callId }),
     ];
     this.systemPrompt = buildSystemPrompt(call?.campaignContact?.campaign);
 
@@ -176,6 +179,18 @@ export class CallStreamSession {
 
     if (finalReply) {
       await this.speak(finalReply);
+      // Only hang up if nothing (e.g. barge-in) superseded this turn while the
+      // goodbye line was still playing - an interruption means the caller
+      // wants to keep talking, so the call should stay open.
+      if (this.turnVersion === version) {
+        const call = await prisma.call.findUnique({
+          where: { id: this.options.callId },
+          select: { endCallRequested: true },
+        });
+        if (call?.endCallRequested) {
+          await hangupCall(this.options.callControlId);
+        }
+      }
     } else {
       this.state = "LISTENING";
     }
