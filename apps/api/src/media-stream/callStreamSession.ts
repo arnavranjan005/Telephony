@@ -154,6 +154,18 @@ export class CallStreamSession {
     this.history.push(userMessage);
     await this.persistMessage(userMessage, false); // unconditional - this genuinely happened
 
+    // The caller re-engaged, so any earlier end_call intent is stale. Without
+    // this reset a barge-in during the goodbye only keeps the call open for
+    // one turn - the leftover flag would hang up right after the next reply,
+    // mid-conversation. Routed through the tool lock so it's ordered after a
+    // superseded turn's still-running end_call handler rather than racing it.
+    await this.runExclusive(() =>
+      prisma.call.updateMany({
+        where: { id: this.options.callId, endCallRequested: true },
+        data: { endCallRequested: false },
+      })
+    );
+
     this.abortController = new AbortController();
     const version = this.turnVersion;
     this.state = "THINKING";

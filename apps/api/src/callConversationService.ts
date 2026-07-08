@@ -116,6 +116,15 @@ export async function handleCallerUtterance(
   transcript: string
 ): Promise<string> {
   const call = await prisma.call.findUnique({ where: { id: callId }, include: { campaignContact: { include: { campaign: true } } } });
+
+  // The caller spoke again, so any earlier end_call intent is stale - clear
+  // it so a pending call.speak.ended hangup check doesn't fire off the back
+  // of this new exchange's reply.
+  await prisma.call.updateMany({
+    where: { id: callId, endCallRequested: true },
+    data: { endCallRequested: false },
+  });
+
   const history = await loadHistory(callId);
   const beforeCount = history.length;
 

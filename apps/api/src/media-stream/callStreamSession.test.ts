@@ -1,19 +1,26 @@
 const callFindUnique = jest.fn();
+const callUpdateMany = jest.fn();
 const conversationMessageCreate = jest.fn();
 const callEventBusPublish = jest.fn();
 const loadHistory = jest.fn();
 const runStreamingConversationTurn = jest.fn();
 const getAIAgent = jest.fn();
 const sendSpeech = jest.fn();
+const hangupCall = jest.fn();
 
 jest.mock("@telephony/database", () => ({
   prisma: {
-    call: { findUnique: (...args: unknown[]) => callFindUnique(...args) },
+    call: {
+      findUnique: (...args: unknown[]) => callFindUnique(...args),
+      updateMany: (...args: unknown[]) => callUpdateMany(...args),
+    },
     conversationMessage: { create: (...args: unknown[]) => conversationMessageCreate(...args) },
   },
   CallDirection: { INBOUND: "INBOUND", OUTBOUND: "OUTBOUND" },
   MessageRole: { USER: "USER", ASSISTANT: "ASSISTANT", SYSTEM: "SYSTEM", TOOL: "TOOL" },
 }));
+
+jest.mock("@telephony/domain", () => ({ hangupCall: (...args: unknown[]) => hangupCall(...args) }));
 
 jest.mock("../ai/agentFactory", () => ({ getAIAgent: (...args: unknown[]) => getAIAgent(...args) }));
 
@@ -173,6 +180,44 @@ describe("CallStreamSession", () => {
     await flushMicrotasks();
 
     expect(sendSpeech).not.toHaveBeenCalled();
+  });
+
+  it("hangs up after the goodbye finishes when end_call was requested during the turn", async () => {
+    runStreamingConversationTurn.mockResolvedValue({ history: [], finalReply: "Goodbye!" });
+    callFindUnique.mockResolvedValue({ endCallRequested: true });
+
+    transcriptHandler({ transcript: "bye", isFinal: true, speechFinal: true });
+    await flushMicrotasks();
+
+    expect(sendSpeech).toHaveBeenCalledWith("Goodbye!", expect.any(Function));
+    expect(hangupCall).toHaveBeenCalledWith("ctrl_1");
+  });
+
+  it("a new utterance clears a stale end_call request, so the next reply doesn't hang up the call", async () => {
+    // Simulate the flag left behind by a goodbye turn the caller barged in
+    // on: the DB row still says endCallRequested until the new turn's own
+    // reset lands.
+    let endCallRequested = true;
+    callUpdateMany.mockImplementation(async () => {
+      endCallRequested = false;
+      return { count: 1 };
+    });
+    callFindUnique.mockImplementation(async (args: { select?: { endCallRequested?: boolean } }) =>
+      args?.select?.endCallRequested
+        ? { endCallRequested }
+        : { id: "call_1", direction: "INBOUND", fromNumber: "+12125551234", leadId: "lead_1" }
+    );
+    runStreamingConversationTurn.mockResolvedValue({ history: [], finalReply: "Sure, one more thing." });
+
+    transcriptHandler({ transcript: "wait, actually one more question", isFinal: true, speechFinal: true });
+    await flushMicrotasks();
+
+    expect(callUpdateMany).toHaveBeenCalledWith({
+      where: { id: "call_1", endCallRequested: true },
+      data: { endCallRequested: false },
+    });
+    expect(sendSpeech).toHaveBeenCalledWith("Sure, one more thing.", expect.any(Function));
+    expect(hangupCall).not.toHaveBeenCalled();
   });
 
   it("close() closes the Deepgram connection and cancels any active TTS", async () => {
