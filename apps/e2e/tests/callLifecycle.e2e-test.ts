@@ -220,6 +220,14 @@ describe("call lifecycle e2e (real Postgres + Redis)", () => {
       await request(app).post("/api/calls/webhook").send({
         data: { event_type: "call.answered", payload: { call_control_id: contactCall.telnyxCallControlId } },
       });
+      // The webhook endpoint acks 200 before processing, so wait for the
+      // answered handler's IN_PROGRESS write to land before sending the
+      // hangup - otherwise the hangup handler can read the call as
+      // unanswered and finalize the contact FAILED instead of CALLED (same
+      // guard as the follow-up lifecycle test above).
+      await waitFor(
+        async () => (await prisma.call.findUniqueOrThrow({ where: { id: contactCall.id } })).status === CallStatus.IN_PROGRESS
+      );
       await request(app).post("/api/calls/webhook").send({
         data: {
           event_type: "call.hangup",
