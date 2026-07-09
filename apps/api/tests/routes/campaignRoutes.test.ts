@@ -14,7 +14,7 @@ jest.mock("@telephony/domain", () => ({
 
 import request from "supertest";
 import { createApp } from "../../src/app";
-import { OBJECTION_HANDLING_BASELINE } from "../../src/callConversationService";
+import { DEFAULT_OUTBOUND_OPENING_LINE, OBJECTION_HANDLING_BASELINE } from "../../src/callConversationService";
 
 const app = createApp();
 
@@ -23,6 +23,11 @@ describe("Campaign routes", () => {
     const res = await request(app).get("/api/campaigns/objection-baseline");
     expect(res.status).toBe(200);
     expect(res.body.text).toBe(OBJECTION_HANDLING_BASELINE);
+  });
+  it("GET /api/campaigns/opening-line-default returns the default outbound opening line", async () => {
+    const res = await request(app).get("/api/campaigns/opening-line-default");
+    expect(res.status).toBe(200);
+    expect(res.body.text).toBe(DEFAULT_OUTBOUND_OPENING_LINE);
   });
   it("POST /api/campaigns creates a campaign with its contacts", async () => {
     createCampaign.mockResolvedValue({ id: "camp_1", name: "Spring outreach" });
@@ -47,6 +52,7 @@ describe("Campaign routes", () => {
       .post("/api/campaigns")
       .send({
         name: "Spring outreach",
+        script: "Ask about renewal",
         objectionPlaybook: "If price is the objection, mention the 3-installment plan",
         contacts: [],
       });
@@ -61,7 +67,7 @@ describe("Campaign routes", () => {
 
     await request(app)
       .post("/api/campaigns")
-      .send({ name: "Spring outreach", streamingEnabled: true, contacts: [] });
+      .send({ name: "Spring outreach", script: "Ask about renewal", streamingEnabled: true, contacts: [] });
 
     expect(createCampaign).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Spring outreach", streamingEnabled: true })
@@ -69,7 +75,13 @@ describe("Campaign routes", () => {
   });
 
   it("POST /api/campaigns rejects a request missing name", async () => {
-    const res = await request(app).post("/api/campaigns").send({ contacts: [] });
+    const res = await request(app).post("/api/campaigns").send({ script: "Ask about renewal", contacts: [] });
+    expect(res.status).toBe(400);
+    expect(createCampaign).not.toHaveBeenCalled();
+  });
+
+  it("POST /api/campaigns rejects a request missing script", async () => {
+    const res = await request(app).post("/api/campaigns").send({ name: "Spring outreach", contacts: [] });
     expect(res.status).toBe(400);
     expect(createCampaign).not.toHaveBeenCalled();
   });

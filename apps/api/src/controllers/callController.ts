@@ -11,6 +11,7 @@ import {
   finalizeDialOutcome,
   buildStreamUrl,
   hangupCall,
+  startRecording,
 } from "@telephony/domain";
 import { verifyTelnyxSignature } from "../telnyx/webhookVerifier";
 import { handleCallerUtterance } from "../callConversationService";
@@ -161,7 +162,7 @@ export async function handleTelnyxWebhook(req: Request, res: Response) {
         }
         if (clientStateCallId === undefined) {
           const streaming = call.streamingEnabled
-            ? { streamUrl: buildStreamUrl(call.id), streamTrack: "both_tracks" as const, bidirectionalCodec: "L16" }
+            ? { streamUrl: await buildStreamUrl(call.id), streamTrack: "both_tracks" as const, bidirectionalCodec: "L16" }
             : undefined;
           await answerCall(callControlId, streaming, true);
         }
@@ -183,6 +184,14 @@ export async function handleTelnyxWebhook(req: Request, res: Response) {
           data: { status: CallStatus.IN_PROGRESS, startedAt: new Date() },
         });
         callEventBus.publish(call.id, "call.answered", { callControlId });
+        if (call.direction === CallDirection.OUTBOUND) {
+          // Inbound calls request recording inline via answerCall's
+          // record-from-answer param; outbound has no dial-time equivalent
+          // (see callService.ts's startRecording comment), so it's started
+          // explicitly here instead, once Telnyx confirms the far end
+          // actually picked up.
+          await startRecording(callControlId);
+        }
         if (call.streamingEnabled) {
           // Streaming calls greet the caller and start transcription from
           // within CallStreamSession once Telnyx's media-stream "start" frame

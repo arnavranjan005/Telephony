@@ -78,6 +78,7 @@ export const apiClient = {
   // Campaigns
   listCampaigns: () => apiFetch<{ campaigns: Campaign[] }>("/api/campaigns"),
   getObjectionBaseline: () => apiFetch<{ text: string }>("/api/campaigns/objection-baseline"),
+  getOpeningLineDefault: () => apiFetch<{ text: string }>("/api/campaigns/opening-line-default"),
   getCampaign: (campaignId: string) => apiFetch<{ campaign: CampaignWithContacts }>(`/api/campaigns/${campaignId}`),
   createCampaign: (input: CreateCampaignInput) =>
     apiFetch<{ campaign: CampaignWithContacts }>("/api/campaigns", { method: "POST", body: JSON.stringify(input) }),

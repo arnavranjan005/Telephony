@@ -68,6 +68,18 @@ export async function hangupCall(callControlId: string) {
   await telnyxClient.calls.hangup(callControlId, {} as never);
 }
 
+/**
+ * Starts recording an outbound call. Unlike the inbound path, Telnyx's dial
+ * command (`calls.create`) has no inline `record` field the way `answer`
+ * does ("record-from-answer") - recording an outbound leg is a separate
+ * explicit action, fired once the call is actually answered by the far end
+ * (see callController.ts's call.answered handler), to get the same
+ * "record from answer" behavior by another route.
+ */
+export async function startRecording(callControlId: string) {
+  await telnyxClient.calls.recordStart(callControlId, { format: "mp3", channels: "dual" } as never);
+}
+
 export function decodeClientState(clientState?: string): Record<string, unknown> {
   if (!clientState) return {};
   try {

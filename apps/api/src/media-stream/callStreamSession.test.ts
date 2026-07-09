@@ -39,6 +39,9 @@ jest.mock("../conversationHistory", () => ({
   ROLE_TO_DB: { user: "USER", assistant: "ASSISTANT", system: "SYSTEM", tool: "TOOL" },
 }));
 
+const DEFAULT_INBOUND_GREETING = "Hi, thanks for calling! How can I help you today?";
+const DEFAULT_OUTBOUND_OPENING_LINE = "Hi, thanks for picking up - this is an automated call, do you have a quick moment?";
+
 jest.mock("../callConversationService", () => ({
   SYSTEM_PROMPT: "you are a test agent",
   buildSystemPrompt: (campaign?: { script?: string | null; objectionPlaybook?: string | null } | null) => {
@@ -46,6 +49,10 @@ jest.mock("../callConversationService", () => ({
     if (campaign?.script) parts.push(campaign.script);
     if (campaign?.objectionPlaybook) parts.push(campaign.objectionPlaybook);
     return parts.join("\n\n");
+  },
+  resolveGreeting: (direction?: string, campaign?: { openingLine?: string | null } | null) => {
+    if (direction === "OUTBOUND") return campaign?.openingLine?.trim() || DEFAULT_OUTBOUND_OPENING_LINE;
+    return DEFAULT_INBOUND_GREETING;
   },
 }));
 
@@ -103,17 +110,58 @@ describe("CallStreamSession", () => {
     expect(sttConnect).toHaveBeenCalled();
   });
 
-  it("speaks a greeting once when the Telnyx start frame arrives", async () => {
+  it("speaks a greeting once when the Telnyx start frame arrives, and persists it (both to the DB and to in-memory history for the LLM's own context)", async () => {
     session.handleTelnyxFrame(JSON.stringify({ event: "start", sequence_number: "1", start: { call_control_id: "ctrl_1", stream_id: "s1", media_format: {} } }));
     // speak() queues onto ttsQueue (see callStreamSession.ts) rather than
     // calling sendSpeech synchronously, so it needs a tick to actually run.
     await flushMicrotasks();
 
-    expect(sendSpeech).toHaveBeenCalledWith("Hi, thanks for calling! How can I help you today?", expect.any(Function));
+    expect(sendSpeech).toHaveBeenCalledWith(DEFAULT_INBOUND_GREETING, expect.any(Function));
+    expect(conversationMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ role: "ASSISTANT", content: DEFAULT_INBOUND_GREETING }) })
+    );
 
     session.handleTelnyxFrame(JSON.stringify({ event: "start", sequence_number: "2", start: { call_control_id: "ctrl_1", stream_id: "s1", media_format: {} } }));
     await flushMicrotasks();
     expect(sendSpeech).toHaveBeenCalledTimes(1); // not re-greeted
+
+    // The greeting is now part of the history handed to the model's next
+    // turn, not just something that was spoken and forgotten.
+    runStreamingConversationTurn.mockResolvedValue({ history: [], finalReply: "ok" });
+    transcriptHandler({ transcript: "hi", isFinal: true, speechFinal: true });
+    await flushMicrotasks();
+    const historyArg = runStreamingConversationTurn.mock.calls[0][1];
+    expect(historyArg).toEqual(
+      expect.arrayContaining([expect.objectContaining({ role: "assistant", content: DEFAULT_INBOUND_GREETING })])
+    );
+  });
+
+  it("speaks the campaign's openingLine (not the inbound greeting) when the call is outbound", async () => {
+    callFindUnique.mockResolvedValue({
+      id: "call_1",
+      direction: "OUTBOUND",
+      toNumber: "+12125551234",
+      leadId: "lead_1",
+      campaignContact: { campaign: { openingLine: "Hi, this is Acquire Right calling about your quote." } },
+    });
+    const outboundSession = new CallStreamSession({ callId: "call_2", callControlId: "ctrl_2", sendToTelnyx });
+    await outboundSession.start();
+
+    outboundSession.handleTelnyxFrame(JSON.stringify({ event: "start", sequence_number: "1", start: { call_control_id: "ctrl_2", stream_id: "s1", media_format: {} } }));
+    await flushMicrotasks();
+
+    expect(sendSpeech).toHaveBeenCalledWith("Hi, this is Acquire Right calling about your quote.", expect.any(Function));
+  });
+
+  it("falls back to the generic outbound opening line when there's no campaign (e.g. a follow-up call) or the campaign didn't set one", async () => {
+    callFindUnique.mockResolvedValue({ id: "call_1", direction: "OUTBOUND", toNumber: "+12125551234", leadId: "lead_1" });
+    const outboundSession = new CallStreamSession({ callId: "call_2", callControlId: "ctrl_2", sendToTelnyx });
+    await outboundSession.start();
+
+    outboundSession.handleTelnyxFrame(JSON.stringify({ event: "start", sequence_number: "1", start: { call_control_id: "ctrl_2", stream_id: "s1", media_format: {} } }));
+    await flushMicrotasks();
+
+    expect(sendSpeech).toHaveBeenCalledWith(DEFAULT_OUTBOUND_OPENING_LINE, expect.any(Function));
   });
 
   it("forwards inbound media audio to Deepgram", () => {
@@ -221,6 +269,47 @@ describe("CallStreamSession", () => {
       data: { endCallRequested: false },
     });
     expect(sendSpeech).toHaveBeenCalledWith("Sure, one more thing.", expect.any(Function));
+    expect(hangupCall).not.toHaveBeenCalled();
+  });
+
+  it("hangs up immediately without speaking the fallback line, when end_call was already requested before the turn failed", async () => {
+    runStreamingConversationTurn.mockRejectedValue(new Error("boom"));
+    callFindUnique.mockResolvedValue({ endCallRequested: true });
+
+    transcriptHandler({ transcript: "bye", isFinal: true, speechFinal: true });
+    await flushMicrotasks();
+
+    expect(hangupCall).toHaveBeenCalledWith("ctrl_1");
+    expect(sendSpeech).not.toHaveBeenCalled();
+  });
+
+  it("does not hang up (or speak) on a failed turn if the caller barged in before it failed, even with end_call set", async () => {
+    runStreamingConversationTurn.mockImplementation(async () => {
+      // Caller starts talking again while this turn is still "thinking" -
+      // same as the barge-in test above, this bumps turnVersion immediately.
+      transcriptHandler({ transcript: "wait, hold on", isFinal: false, speechFinal: false });
+      throw new Error("boom");
+    });
+    callFindUnique.mockResolvedValue({ endCallRequested: true });
+
+    transcriptHandler({ transcript: "bye", isFinal: true, speechFinal: true });
+    await flushMicrotasks();
+
+    expect(hangupCall).not.toHaveBeenCalled();
+    expect(sendSpeech).not.toHaveBeenCalled(); // not our turn to speak over the caller anymore
+  });
+
+  it("still speaks the fallback line when the turn fails and end_call was never requested", async () => {
+    runStreamingConversationTurn.mockRejectedValue(new Error("boom"));
+    callFindUnique.mockResolvedValue({ endCallRequested: false });
+
+    transcriptHandler({ transcript: "hello", isFinal: true, speechFinal: true });
+    await flushMicrotasks();
+
+    expect(sendSpeech).toHaveBeenCalledWith(
+      "Sorry, I'm having trouble on my end - could you give me just a moment?",
+      expect.any(Function)
+    );
     expect(hangupCall).not.toHaveBeenCalled();
   });
 

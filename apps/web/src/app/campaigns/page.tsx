@@ -146,13 +146,16 @@ function CreateCampaignDialog({
 }) {
   const [name, setName] = useState("");
   const [script, setScript] = useState("");
+  const [openingLine, setOpeningLine] = useState("");
   const [objectionPlaybook, setObjectionPlaybook] = useState("");
   const [contactsText, setContactsText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [objectionBaseline, setObjectionBaseline] = useState<string | null>(null);
+  const [openingLineDefault, setOpeningLineDefault] = useState<string | null>(null);
 
   useEffect(() => {
     apiClient.getObjectionBaseline().then((data) => setObjectionBaseline(data.text));
+    apiClient.getOpeningLineDefault().then((data) => setOpeningLineDefault(data.text));
   }, []);
 
   async function submit() {
@@ -169,8 +172,8 @@ function CreateCampaignDialog({
         return { phoneNumber: maybeName };
       });
 
-    if (!name.trim() || contacts.length === 0) {
-      toast.error("Campaign name and at least one contact are required");
+    if (!name.trim() || !script.trim() || contacts.length === 0) {
+      toast.error("Campaign name, call script, and at least one contact are required");
       return;
     }
 
@@ -178,13 +181,15 @@ function CreateCampaignDialog({
     try {
       await apiClient.createCampaign({
         name,
-        script: script || undefined,
+        script,
+        openingLine: openingLine || undefined,
         objectionPlaybook: objectionPlaybook || undefined,
         contacts,
       });
       toast.success("Campaign created");
       setName("");
       setScript("");
+      setOpeningLine("");
       setObjectionPlaybook("");
       setContactsText("");
       onCreated();
@@ -211,8 +216,29 @@ function CreateCampaignDialog({
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Spring promo" />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label>Call script (guidance for the AI agent)</Label>
+            <Label>Call script (required)</Label>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Without one, the model has nothing concrete to work from and may improvise a generic pitch.
+            </p>
             <Textarea value={script} onChange={(e) => setScript(e.target.value)} rows={3} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Opening line (optional)</Label>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Spoken the instant the call connects, before the AI model is invoked - so the callee hears
+              something immediately instead of silence.
+            </p>
+            {openingLineDefault && (
+              <p className="border-l-2 pl-2 text-xs leading-relaxed text-muted-foreground">
+                <span className="font-medium">Used if left blank: </span>
+                &quot;{openingLineDefault}&quot;
+              </p>
+            )}
+            <Input
+              value={openingLine}
+              onChange={(e) => setOpeningLine(e.target.value)}
+              placeholder={'e.g. "Hi, thanks for picking up - I\'m calling about the quote you requested."'}
+            />
           </div>
           <div className="flex flex-col gap-1.5">
             <Label>Objection playbook (optional)</Label>
@@ -280,6 +306,12 @@ function CampaignDetailSheet({ campaignId, onClose }: { campaignId: string | nul
                 <div className="rounded-md border p-3 text-sm">
                   <p className="mb-1 font-medium">Script</p>
                   <p className="whitespace-pre-wrap text-muted-foreground">{campaign.script}</p>
+                </div>
+              )}
+              {campaign.openingLine && (
+                <div className="rounded-md border p-3 text-sm">
+                  <p className="mb-1 font-medium">Opening line</p>
+                  <p className="whitespace-pre-wrap text-muted-foreground">{campaign.openingLine}</p>
                 </div>
               )}
               {campaign.objectionPlaybook && (

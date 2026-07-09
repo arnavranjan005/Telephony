@@ -77,7 +77,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </SidebarGroup>
         </SidebarContent>
         <SidebarFooter className="px-3 py-3 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
-          Telnyx + Gemini voice platform
+          AI voice platform
         </SidebarFooter>
       </Sidebar>
       <SidebarInset>

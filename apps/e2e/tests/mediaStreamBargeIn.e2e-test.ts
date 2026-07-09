@@ -338,21 +338,25 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
     // The DncEntry above is created mid-turn (inside the tool call), before
     // that same round's own messages - and the following round's final
     // confirmation - get persisted. Wait for the actual terminal state
-    // instead of racing those still-in-flight persistMessage() calls.
+    // instead of racing those still-in-flight persistMessage() calls. >= 2
+    // (not 1): the greeting persisted on connect is itself role ASSISTANT/
+    // toolName null, so this condition would already be satisfied before
+    // the real final confirmation ever runs.
     await waitFor(
       async () =>
-        (await prisma.conversationMessage.count({ where: { callId: call.id, role: "ASSISTANT", toolName: null } })) >= 1,
+        (await prisma.conversationMessage.count({ where: { callId: call.id, role: "ASSISTANT", toolName: null } })) >= 2,
       15000
     );
 
     const messages = await prisma.conversationMessage.findMany({ where: { callId: call.id }, orderBy: { createdAt: "asc" } });
     expect(messages.map((m) => [m.role, m.toolName, m.interrupted])).toEqual([
+      ["ASSISTANT", null, false], // the instant greeting, spoken before the model is ever invoked
       ["USER", null, false],
       ["ASSISTANT", "add_to_dnc", false],
       ["TOOL", "add_to_dnc", false],
       ["ASSISTANT", null, false],
     ]);
-    expect(messages[0].content).toBe("please stop calling me");
+    expect(messages[1].content).toBe("please stop calling me");
 
     // The final reply was actually streamed back as real "media" frames over the wire.
     const mediaFramesAfterReply = frames.filter((f) => f.event === "media");
@@ -458,14 +462,18 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
     // final round's confirmation - get persisted. Waiting on the FollowUp
     // alone races the still-in-flight later persistMessage() calls; wait for
     // the actual terminal state (the final spoken confirmation) instead.
+    // >= 2 (not 1): the greeting persisted on connect is itself role
+    // ASSISTANT/toolName null, so this condition would already be satisfied
+    // before the real final confirmation ever runs.
     await waitFor(
       async () =>
-        (await prisma.conversationMessage.count({ where: { callId: call.id, role: "ASSISTANT", toolName: null } })) >= 1,
+        (await prisma.conversationMessage.count({ where: { callId: call.id, role: "ASSISTANT", toolName: null } })) >= 2,
       15000
     );
 
     const messages = await prisma.conversationMessage.findMany({ where: { callId: call.id }, orderBy: { createdAt: "asc" } });
     expect(messages.map((m) => [m.role, m.toolName])).toEqual([
+      ["ASSISTANT", null], // the instant greeting, spoken before the model is ever invoked
       ["USER", null],
       ["ASSISTANT", "schedule_followup"],
       ["TOOL", "schedule_followup"],
@@ -473,12 +481,12 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
       ["TOOL", "schedule_followup"],
       ["ASSISTANT", null],
     ]);
-    expect(JSON.parse(messages[2].content)).toEqual({
+    expect(JSON.parse(messages[3].content)).toEqual({
       scheduled: false,
       reason: "Requested time is outside the legal calling window (8am-9pm local to this number)",
       suggestedTime: suggestedTime.toISOString(),
     });
-    const confirmedResult = JSON.parse(messages[4].content);
+    const confirmedResult = JSON.parse(messages[5].content);
     expect(confirmedResult.scheduled).toBe(true);
 
     const followUps = await prisma.followUp.findMany({ where: { leadId: call.leadId! } });
@@ -523,20 +531,24 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
     // before that same round's own messages - and the following round's
     // final confirmation - get persisted. Wait for the actual terminal state
     // instead of racing those still-in-flight persistMessage() calls.
+    // >= 2 (not 1): the greeting persisted on connect is itself role
+    // ASSISTANT/toolName null, so this condition would already be satisfied
+    // before the real final confirmation ever runs.
     await waitFor(
       async () =>
-        (await prisma.conversationMessage.count({ where: { callId: call.id, role: "ASSISTANT", toolName: null } })) >= 1,
+        (await prisma.conversationMessage.count({ where: { callId: call.id, role: "ASSISTANT", toolName: null } })) >= 2,
       15000
     );
 
     const messages = await prisma.conversationMessage.findMany({ where: { callId: call.id }, orderBy: { createdAt: "asc" } });
     expect(messages.map((m) => [m.role, m.toolName])).toEqual([
+      ["ASSISTANT", null], // the instant greeting, spoken before the model is ever invoked
       ["USER", null],
       ["ASSISTANT", "update_lead_status"],
       ["TOOL", "update_lead_status"],
       ["ASSISTANT", null],
     ]);
-    expect(JSON.parse(messages[2].content)).toEqual({ updated: true, leadId: call.leadId, status: "HOT" });
+    expect(JSON.parse(messages[3].content)).toEqual({ updated: true, leadId: call.leadId, status: "HOT" });
 
     const lead = await prisma.lead.findUniqueOrThrow({ where: { id: call.leadId! } });
     expect(lead.notes).toBe("Ready to buy now, budget confirmed");
@@ -604,14 +616,18 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
     // call), before that same round's own messages - and the final round's
     // confirmation - get persisted. Wait for the actual terminal state
     // instead of racing those still-in-flight persistMessage() calls.
+    // >= 2 (not 1): the greeting persisted on connect is itself role
+    // ASSISTANT/toolName null, so this condition would already be satisfied
+    // before the real final confirmation ever runs.
     await waitFor(
       async () =>
-        (await prisma.conversationMessage.count({ where: { callId: call.id, role: "ASSISTANT", toolName: null } })) >= 1,
+        (await prisma.conversationMessage.count({ where: { callId: call.id, role: "ASSISTANT", toolName: null } })) >= 2,
       15000
     );
 
     const messages = await prisma.conversationMessage.findMany({ where: { callId: call.id }, orderBy: { createdAt: "asc" } });
     expect(messages.map((m) => [m.role, m.toolName])).toEqual([
+      ["ASSISTANT", null], // the instant greeting, spoken before the model is ever invoked
       ["USER", null],
       ["ASSISTANT", "check_appointment_availability"],
       ["TOOL", "check_appointment_availability"],
@@ -619,8 +635,8 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
       ["TOOL", "schedule_appointment"],
       ["ASSISTANT", null],
     ]);
-    expect(JSON.parse(messages[2].content)).toEqual({ available: true });
-    expect(JSON.parse(messages[4].content).booked).toBe(true);
+    expect(JSON.parse(messages[3].content)).toEqual({ available: true });
+    expect(JSON.parse(messages[5].content).booked).toBe(true);
 
     const appointment = await prisma.appointment.findFirstOrThrow({ where: { callId: call.id } });
     expect(appointment.googleEventId).toBe("evt_stream_e2e");

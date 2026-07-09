@@ -10,7 +10,7 @@ import { buildFollowUpTools } from "../ai/tools/followUpTools";
 import { buildSentimentTools } from "../ai/tools/sentimentTools";
 import { buildCallControlTools } from "../ai/tools/callControlTools";
 import { loadHistory, ROLE_TO_DB } from "../conversationHistory";
-import { SYSTEM_PROMPT, buildSystemPrompt } from "../callConversationService";
+import { SYSTEM_PROMPT, buildSystemPrompt, resolveGreeting } from "../callConversationService";
 import { callEventBus } from "../sse/eventBus";
 import { DeepgramStreamClient, DeepgramTranscriptEvent } from "./deepgramClient";
 import { sendSpeech, TtsSendHandle } from "./ttsSender";
@@ -56,6 +56,7 @@ export class CallStreamSession {
   private transcriptBuffer = "";
   private tools: ToolDefinition[] = [];
   private systemPrompt = SYSTEM_PROMPT;
+  private greeting = resolveGreeting();
   private greeted = false;
 
   constructor(private readonly options: CallStreamSessionOptions) {}
@@ -83,6 +84,7 @@ export class CallStreamSession {
       ...buildCallControlTools({ callId: this.options.callId }),
     ];
     this.systemPrompt = buildSystemPrompt(call?.campaignContact?.campaign, call?.direction);
+    this.greeting = resolveGreeting(call?.direction, call?.campaignContact?.campaign);
 
     this.stt = new DeepgramStreamClient();
     this.stt.on("transcript", (event: DeepgramTranscriptEvent) => this.handleTranscript(event));
@@ -110,7 +112,19 @@ export class CallStreamSession {
       this.greeted = true;
       // eslint-disable-next-line no-console
       console.log(`Media stream negotiated format for call ${this.options.callId}:`, frame.start.media_format);
-      void this.speak("Hi, thanks for calling! How can I help you today?");
+
+      // Recorded into history/DB just like any other reply (rather than only
+      // spoken) - without this, the model's first real turn has no idea what
+      // it already told the caller, and the recording/transcript disagreed
+      // with each other on whether this was ever said at all.
+      const greetingMessage: AgentMessage = { role: "assistant", content: this.greeting };
+      this.history.push(greetingMessage);
+      this.persistMessage(greetingMessage, false).catch((error) => {
+        // eslint-disable-next-line no-console
+        console.error(`Failed to persist greeting for call ${this.options.callId}:`, error);
+      });
+
+      void this.speak(this.greeting);
       return;
     }
 
@@ -180,6 +194,23 @@ export class CallStreamSession {
       // tells them something's wrong rather than leaving dead air.
       if (this.state === "THINKING" && this.turnVersion === version) {
         this.state = "LISTENING";
+
+        // end_call (and whatever it was bundled with, e.g. add_to_dnc) may
+        // have already run successfully earlier in this same turn, with only
+        // the trailing goodbye-text generation failing here - that intent is
+        // durably recorded in the DB and shouldn't be lost just because the
+        // final reply couldn't be produced. Honor it immediately instead of
+        // making the caller sit through a "having trouble" line before a
+        // goodbye that was never coming either way.
+        const call = await prisma.call.findUnique({
+          where: { id: this.options.callId },
+          select: { endCallRequested: true },
+        });
+        if (call?.endCallRequested) {
+          await hangupCall(this.options.callControlId);
+          return;
+        }
+
         const fallbackReply = "Sorry, I'm having trouble on my end - could you give me just a moment?";
         try {
           await this.speak(fallbackReply);

@@ -124,6 +124,16 @@ describe("runStreamingConversationTurn", () => {
     expect(tool.handler).toHaveBeenCalled();
   });
 
+  it("still returns the final reply even if persisting it to the DB fails", async () => {
+    const agent = makeAgent([{ content: "Alright, goodbye!", toolCalls: [] }]);
+    const context = makeContext();
+    conversationMessageCreate.mockRejectedValueOnce(new Error("DB unavailable"));
+
+    const result = await runStreamingConversationTurn(agent, [], [], undefined, context);
+
+    expect(result.finalReply).toBe("Alright, goodbye!"); // reply already generated - never discarded
+  });
+
   it("persists a tool result for an unknown tool name without throwing", async () => {
     const agent = makeAgent([
       { content: null, toolCalls: [{ id: "tc_1", name: "nonexistent_tool", args: {} }] },

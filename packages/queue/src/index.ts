@@ -1,4 +1,4 @@
-export { redisConnection } from "./redis";
+export { redisConnection, getRedisClient } from "./redis";
 export {
   dialQueue,
   DIAL_QUEUE_NAME,

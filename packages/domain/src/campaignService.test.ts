@@ -92,6 +92,7 @@ describe("campaignService", () => {
 
       await createCampaign({
         name: "Spring outreach",
+        script: "Ask about renewal",
         contacts: [{ phoneNumber: "+15551234567", firstName: "Jane" }],
       });
 
@@ -109,10 +110,10 @@ describe("campaignService", () => {
       campaignCreate.mockResolvedValue({ id: "camp_1" });
       campaignFindUnique.mockResolvedValue({ id: "camp_1", contacts: [] });
 
-      await createCampaign({ name: "Spring outreach", contacts: [] });
+      await createCampaign({ name: "Spring outreach", script: "Ask about renewal", contacts: [] });
 
       expect(campaignCreate).toHaveBeenCalledWith({
-        data: { name: "Spring outreach", script: undefined, streamingEnabled: true },
+        data: { name: "Spring outreach", script: "Ask about renewal", streamingEnabled: true },
       });
     });
 
@@ -120,10 +121,15 @@ describe("campaignService", () => {
       campaignCreate.mockResolvedValue({ id: "camp_1" });
       campaignFindUnique.mockResolvedValue({ id: "camp_1", contacts: [] });
 
-      await createCampaign({ name: "Spring outreach", streamingEnabled: false, contacts: [] });
+      await createCampaign({
+        name: "Spring outreach",
+        script: "Ask about renewal",
+        streamingEnabled: false,
+        contacts: [],
+      });
 
       expect(campaignCreate).toHaveBeenCalledWith({
-        data: { name: "Spring outreach", script: undefined, streamingEnabled: false },
+        data: { name: "Spring outreach", script: "Ask about renewal", streamingEnabled: false },
       });
     });
 
@@ -133,6 +139,7 @@ describe("campaignService", () => {
 
       await createCampaign({
         name: "Spring outreach",
+        script: "Ask about renewal",
         objectionPlaybook: "If price is the objection, mention the 3-installment plan",
         contacts: [],
       });
@@ -140,10 +147,28 @@ describe("campaignService", () => {
       expect(campaignCreate).toHaveBeenCalledWith({
         data: {
           name: "Spring outreach",
-          script: undefined,
+          script: "Ask about renewal",
           objectionPlaybook: "If price is the objection, mention the 3-installment plan",
           streamingEnabled: true,
         },
+      });
+    });
+
+    it("persists an openingLine when provided", async () => {
+      campaignCreate.mockResolvedValue({ id: "camp_1" });
+      campaignFindUnique.mockResolvedValue({ id: "camp_1", contacts: [] });
+
+      await createCampaign({
+        name: "Spring outreach",
+        script: "Ask about renewal",
+        openingLine: "Hi, this is Acquire Right calling about the quote you requested.",
+        contacts: [],
+      });
+
+      expect(campaignCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          openingLine: "Hi, this is Acquire Right calling about the quote you requested.",
+        }),
       });
     });
 
@@ -151,7 +176,7 @@ describe("campaignService", () => {
       campaignCreate.mockResolvedValue({ id: "camp_1" });
       campaignFindUnique.mockResolvedValue({ id: "camp_1", contacts: [] });
 
-      await createCampaign({ name: "Spring outreach", contacts: [] });
+      await createCampaign({ name: "Spring outreach", script: "Ask about renewal", contacts: [] });
 
       expect(campaignCreate).toHaveBeenCalledWith({
         data: expect.objectContaining({ objectionPlaybook: undefined }),
@@ -163,7 +188,11 @@ describe("campaignService", () => {
       campaignContactCreate.mockResolvedValue({});
       campaignFindUnique.mockResolvedValue({ id: "camp_1", contacts: [] });
 
-      await createCampaign({ name: "Spring outreach", contacts: [{ leadId: "lead_existing" }] });
+      await createCampaign({
+        name: "Spring outreach",
+        script: "Ask about renewal",
+        contacts: [{ leadId: "lead_existing" }],
+      });
 
       expect(leadUpsert).not.toHaveBeenCalled();
       expect(campaignContactCreate).toHaveBeenCalledWith({

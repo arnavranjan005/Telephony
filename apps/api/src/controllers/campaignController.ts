@@ -8,7 +8,7 @@ import {
   startCampaign,
 } from "@telephony/domain";
 import { callEventBus } from "../sse/eventBus";
-import { OBJECTION_HANDLING_BASELINE } from "../callConversationService";
+import { DEFAULT_OUTBOUND_OPENING_LINE, OBJECTION_HANDLING_BASELINE } from "../callConversationService";
 
 const contactSchema = z.object({
   leadId: z.string().optional(),
@@ -19,8 +19,9 @@ const contactSchema = z.object({
 
 const createCampaignSchema = z.object({
   name: z.string().min(1),
-  script: z.string().optional(),
+  script: z.string().min(1, "A call script is required"),
   objectionPlaybook: z.string().optional(),
+  openingLine: z.string().optional(),
   streamingEnabled: z.boolean().optional(),
   contacts: z.array(contactSchema).default([]),
 });
@@ -42,6 +43,15 @@ export async function postCampaign(req: Request, res: Response) {
  */
 export async function getObjectionBaseline(_req: Request, res: Response) {
   res.json({ text: OBJECTION_HANDLING_BASELINE });
+}
+
+/**
+ * Same rationale as getObjectionBaseline above: lets the admin panel show
+ * what a campaign's outbound calls actually say if openingLine is left
+ * unset, instead of leaving the author to guess at "a generic default".
+ */
+export async function getOpeningLineDefault(_req: Request, res: Response) {
+  res.json({ text: DEFAULT_OUTBOUND_OPENING_LINE });
 }
 
 export async function getCampaigns(_req: Request, res: Response) {
