@@ -44,6 +44,17 @@ let client: Redis | undefined;
 export function getRedisClient(): Redis {
   if (!client) {
     client = new Redis({ ...parseRedisUrl(), lazyConnect: true, maxRetriesPerRequest: 3 });
+    // apps/api and apps/worker are long-running processes that are meant to
+    // stay alive on this connection - but a short-lived script (a one-off
+    // CLI task, or a Jest run, which shares this same module instance
+    // in-process under --runInBand) is not, and an open ioredis socket
+    // otherwise keeps Node's event loop alive indefinitely, hanging the
+    // whole process after its actual work is done. unref() (once actually
+    // connected - "stream" doesn't exist yet under lazyConnect) tells Node
+    // this handle alone shouldn't count as a reason to stay running,
+    // without closing the connection or affecting a real server (which
+    // stays alive on its own listening socket regardless).
+    client.on("connect", () => client?.stream.unref());
   }
   return client;
 }
