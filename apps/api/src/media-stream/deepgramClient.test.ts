@@ -2,11 +2,16 @@ const connect = jest.fn();
 const sendMedia = jest.fn();
 const socketOn = jest.fn();
 const socketClose = jest.fn();
+const socketConnect = jest.fn();
+const socketWaitForOpen = jest.fn();
 
 const fakeSocket = {
   on: socketOn,
   sendMedia,
   close: socketClose,
+  connect: socketConnect,
+  waitForOpen: socketWaitForOpen,
+  readyState: 1, // OPEN - see deepgramClient.ts's sendAudio guard
 };
 
 jest.mock("@deepgram/sdk", () => ({
@@ -25,6 +30,8 @@ describe("DeepgramStreamClient", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     connect.mockResolvedValue(fakeSocket);
+    socketWaitForOpen.mockResolvedValue(fakeSocket);
+    fakeSocket.readyState = 1;
   });
 
   function getMessageHandler(): (message: unknown) => void {

@@ -24,6 +24,12 @@ export interface StreamingTurnContext {
    * before a new turn's own tool call can start, so arrival order and intent
    * order can never come apart. */
   runExclusive<T>(fn: () => Promise<T>): Promise<T>;
+  /** Called with any text the model attaches alongside a tool call (e.g. "Let
+   * me check that for you" before calling a lookup tool). Without this, that
+   * text was persisted to the transcript but never actually spoken - only the
+   * final post-tool-result reply ever reached the caller, silently dropping
+   * any acknowledgement/clarification the model made while invoking a tool. */
+  onInterimReply?: (text: string) => void;
 }
 
 export interface StreamingConversationResult {
@@ -85,16 +91,34 @@ export async function runStreamingConversationTurn(
     const reply = await agent.generateReply(messages, tools, systemPrompt, context.signal);
 
     if (reply.toolCalls.length === 0) {
-      const finalReply = reply.content ?? "";
+      let finalReply = reply.content ?? "";
 
       if (context.getCurrentVersion() !== context.version) {
         return { history: messages, finalReply: null };
+      }
+
+      if (!finalReply) {
+        // The model can occasionally return a genuinely empty turn (no text,
+        // no tool call - e.g. sometimes right after a function-call round)
+        // with no error to catch. Never let that read as dead air to the
+        // caller: retry once (a fresh sample from the same history usually
+        // succeeds), and only fall back to a fixed line if it happens twice
+        // in a row.
+        if (round < MAX_TOOL_ROUNDTRIPS - 1) continue;
+        finalReply = "Sorry, could you say that again?";
       }
 
       const assistantMessage: AgentMessage = { role: "assistant", content: finalReply };
       messages.push(assistantMessage);
       await persistMessage(context.callId, assistantMessage, false);
       return { history: messages, finalReply };
+    }
+
+    // Once per round, not once per tool call - reply.content is the same
+    // string attached to every toolCall message below, so speaking it inside
+    // the loop would repeat it once per tool call in a multi-tool-call round.
+    if (reply.content) {
+      context.onInterimReply?.(reply.content);
     }
 
     for (const toolCall of reply.toolCalls) {

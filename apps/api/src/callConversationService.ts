@@ -73,13 +73,44 @@ interface CampaignPromptSource {
 }
 
 /**
+ * Without this, nothing tells the model which side placed the call, and it
+ * defaults to the far more common "outbound telemarketer" framing it's seen
+ * in training data - introducing itself as calling from some invented
+ * company even when a caller dialed in. Explicit per-direction framing so it
+ * never has to guess.
+ */
+function callDirectionGuidance(direction?: CallDirection): string | null {
+  if (direction === CallDirection.INBOUND) {
+    return "This caller dialed in to reach you - you did not call them. Don't say \"I'm calling from...\" or claim to have initiated the call; instead find out why they called and help with that.";
+  }
+  if (direction === CallDirection.OUTBOUND) {
+    return "You initiated this call to the person on the other end - introduce yourself and the reason for calling.";
+  }
+  return null;
+}
+
+/**
+ * The model has no innate sense of "now" - without this, it resolves
+ * relative dates the caller mentions ("tomorrow", "next Monday") by guessing
+ * off training data or a tool parameter's example value instead of the real
+ * current date, producing schedule_followup/schedule_appointment calls with
+ * dates that are nonsense (e.g. in the past). Computed fresh per call/turn,
+ * not baked into the static SYSTEM_PROMPT, so it's always actually current.
+ */
+function currentDateTimeGuidance(): string {
+  return `The current date and time is ${new Date().toISOString()} (UTC). Use this as the reference point for resolving any relative date/time the caller mentions (e.g. "tomorrow", "next Monday", "in an hour") - never infer today's date from a tool parameter's example value or from your own training data.`;
+}
+
+/**
  * Layers a campaign's optional script/objection-playbook text on top of the
  * shared SYSTEM_PROMPT. Both fields are opt-in - a campaign with neither set
  * falls back to the baseline instructions (including the generic objection
  * handling above) with no per-campaign authoring required.
  */
-export function buildSystemPrompt(campaign?: CampaignPromptSource | null): string {
-  const parts = [SYSTEM_PROMPT];
+export function buildSystemPrompt(campaign?: CampaignPromptSource | null, direction?: CallDirection): string {
+  const parts = [SYSTEM_PROMPT, currentDateTimeGuidance()];
+  const directionGuidance = callDirectionGuidance(direction);
+  if (directionGuidance) parts.push(directionGuidance);
   if (campaign?.script) parts.push(`Campaign script/guidance:\n${campaign.script}`);
   if (campaign?.objectionPlaybook) parts.push(`Campaign objection playbook:\n${campaign.objectionPlaybook}`);
   return parts.join("\n\n");
@@ -147,7 +178,7 @@ export async function handleCallerUtterance(
     ...buildCallControlTools({ callId }),
   ];
 
-  const systemPrompt = buildSystemPrompt(call?.campaignContact?.campaign);
+  const systemPrompt = buildSystemPrompt(call?.campaignContact?.campaign, call?.direction);
 
   const { history: updatedHistory, finalReply } = await runConversationTurn(agent, history, tools, systemPrompt);
 

@@ -26,6 +26,17 @@ describe("calendarTools", () => {
   const scheduleAppointment = tools.find((t) => t.name === "schedule_appointment")!;
   const cancelAppointmentTool = tools.find((t) => t.name === "cancel_appointment")!;
 
+  // schedule_appointment rejects any startTime that's already in the past
+  // (see calendarTools.ts) - fixing "now" before the fixture dates below
+  // keeps them in the future without hardcoding a moving-target date.
+  beforeEach(() => {
+    jest.useFakeTimers().setSystemTime(new Date("2024-06-01T00:00:00Z"));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it("check_appointment_availability reports availability from the calendar service", async () => {
     isSlotAvailable.mockResolvedValue(true);
 

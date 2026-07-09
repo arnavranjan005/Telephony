@@ -13,6 +13,11 @@ jest.mock("@telephony/config", () => ({
 
 import { sendSpeech } from "./ttsSender";
 
+// Matches SILENCE_LEAD_IN_FRAMES in ttsSender.ts - every sendSpeech() call
+// sends this many silence frames before any real audio (see that file's
+// comment for why: Telnyx's playback buffer needs a brief warm-up).
+const SILENCE_LEAD_IN_FRAMES = 6;
+
 /** Mocks a fetch() response whose body streams the given chunks one read() at a time. */
 function mockStreamingResponse(chunks: Buffer[]): Response {
   let index = 0;
@@ -59,7 +64,7 @@ describe("sendSpeech", () => {
         signal: expect.any(AbortSignal),
       })
     );
-    expect(sendFrame).toHaveBeenCalledTimes(1);
+    expect(sendFrame).toHaveBeenCalledTimes(SILENCE_LEAD_IN_FRAMES + 1);
   });
 
   it("sends the configured voice_settings on every request", async () => {
@@ -131,7 +136,7 @@ describe("sendSpeech", () => {
     await jest.runAllTimersAsync();
     await handle.done;
 
-    expect(sendFrame).toHaveBeenCalledTimes(2);
+    expect(sendFrame).toHaveBeenCalledTimes(SILENCE_LEAD_IN_FRAMES + 2);
   });
 
   it("stops sending further frames and aborts the request once cancel() is called", async () => {
@@ -166,7 +171,11 @@ describe("sendSpeech", () => {
     const sendFrame = jest.fn();
     const handle = sendSpeech("hello", sendFrame);
 
+    // The silence lead-in schedules real (fake) timers before ever awaiting
+    // the fetch - without draining those first, handle.done never resolves
+    // under fake timers and the test hangs until Jest's own timeout.
+    await jest.runAllTimersAsync();
     await expect(handle.done).resolves.toBeUndefined(); // done always resolves (finally), errors are swallowed after synthesis fails
-    expect(sendFrame).not.toHaveBeenCalled();
+    expect(sendFrame).toHaveBeenCalledTimes(SILENCE_LEAD_IN_FRAMES); // silence lead-in already went out before the fetch failed
   });
 });

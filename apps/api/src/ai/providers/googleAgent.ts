@@ -122,6 +122,63 @@ export class GoogleAgent implements AIAgent {
     return { client: this.client, Type: genai.Type };
   }
 
+  // Nothing bounded how long a single generateContent call could take - a
+  // "503 model overloaded" response was observed taking ~9s to even arrive,
+  // and the retry below would then make a second equally slow attempt,
+  // stacking into ~20s of dead air on a live call before the fallback line
+  // ever played. Every attempt is now capped at this, win or lose.
+  private static readonly REQUEST_TIMEOUT_MS = 6000;
+
+  private async generateContentWithTimeout(
+    client: GoogleGenAI,
+    params: Parameters<GoogleGenAI["models"]["generateContent"]>[0]
+  ): ReturnType<GoogleGenAI["models"]["generateContent"]> {
+    const timeoutController = new AbortController();
+    const timer = setTimeout(() => timeoutController.abort(), GoogleAgent.REQUEST_TIMEOUT_MS);
+    const combinedSignal = params.config?.abortSignal
+      ? AbortSignal.any([params.config.abortSignal, timeoutController.signal])
+      : timeoutController.signal;
+    try {
+      return await client.models.generateContent({ ...params, config: { ...params.config, abortSignal: combinedSignal } });
+    } catch (error) {
+      // Distinguishes our own timeout from a real barge-in abort (the
+      // caller's signal) or any other rejection, so the retry logic below
+      // can tell "Gemini was too slow" apart from "quota/overload error" -
+      // the former shouldn't retry (that would just double the wait again),
+      // the latter should get its one quick retry as before.
+      if (timeoutController.signal.aborted) {
+        throw new Error(`Gemini request timed out after ${GoogleAgent.REQUEST_TIMEOUT_MS}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * One quick retry for transient failures (free-tier per-minute rate limits,
+   * momentary "model overloaded" 503s) - NOT a full backoff strategy. This is
+   * a live phone call, not a batch job: Google's own suggested retryDelay on
+   * a 429 is 15-20s, far too slow to sit on while a caller waits in silence.
+   * A short fixed delay catches the cases that clear almost immediately;
+   * anything that doesn't (including a timeout on this retry itself, still
+   * bounded by generateContentWithTimeout) is surfaced to the caller by
+   * callStreamSession's fallback line instead of stalling the call further.
+   */
+  private async generateContentWithRetry(
+    client: GoogleGenAI,
+    params: Parameters<GoogleGenAI["models"]["generateContent"]>[0]
+  ): ReturnType<GoogleGenAI["models"]["generateContent"]> {
+    try {
+      return await this.generateContentWithTimeout(client, params);
+    } catch (error) {
+      const status = error instanceof Error ? (error as Error & { status?: number }).status : undefined;
+      if (status !== 429 && status !== 503) throw error; // includes our own timeout Error - no status, no retry
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      return this.generateContentWithTimeout(client, params);
+    }
+  }
+
   async generateReply(
     messages: AgentMessage[],
     tools: ToolDefinition[],
@@ -136,7 +193,7 @@ export class GoogleAgent implements AIAgent {
     // cancel server-side generation or its billing. Callers that need actual
     // correctness on cancellation (not just avoiding a wasted wait) must still
     // gate on their own turn-versioning rather than relying on this alone.
-    const response = await client.models.generateContent({
+    const response = await this.generateContentWithRetry(client, {
       model: this.model,
       contents,
       config: {

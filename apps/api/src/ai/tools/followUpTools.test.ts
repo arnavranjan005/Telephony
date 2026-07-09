@@ -17,6 +17,14 @@ import { buildFollowUpTools } from "./followUpTools";
 describe("followUpTools", () => {
   beforeEach(() => {
     isWithinCallingHours.mockReturnValue(true); // default: requested time is legal
+    // schedule_followup rejects any scheduledAt that's already in the past
+    // (see followUpTools.ts) - fixing "now" before the fixture dates below
+    // keeps them in the future without hardcoding a moving-target date.
+    jest.useFakeTimers().setSystemTime(new Date("2024-06-01T00:00:00Z"));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it("schedule_followup creates a follow-up bound to the current lead", async () => {
