@@ -44,7 +44,7 @@ describe("attachMediaStreamServer", () => {
     jest.clearAllMocks();
     mockEnv.MEDIA_STREAM_ENABLED = true;
     mockEnv.MEDIA_STREAM_WS_PATH = "/media-stream";
-    verifyStreamToken.mockReturnValue(true);
+    verifyStreamToken.mockResolvedValue(true);
   });
 
   it("does not register an upgrade handler when MEDIA_STREAM_ENABLED is false", () => {
@@ -79,13 +79,14 @@ describe("attachMediaStreamServer", () => {
     expect(handleUpgrade).not.toHaveBeenCalled();
   });
 
-  it("destroys the socket when the token fails verification", () => {
-    verifyStreamToken.mockReturnValue(false);
+  it("destroys the socket when the token fails verification", async () => {
+    verifyStreamToken.mockResolvedValue(false);
     const httpServer = makeHttpServer();
     attachMediaStreamServer(httpServer);
     const socket = makeFakeSocket();
 
     httpServer.emit("upgrade", { url: "/media-stream?callId=call_1&token=bad" }, socket, Buffer.alloc(0));
+    await flushMicrotasks();
 
     expect(verifyStreamToken).toHaveBeenCalledWith("call_1", "bad");
     expect(socket.destroy).toHaveBeenCalled();
@@ -98,6 +99,7 @@ describe("attachMediaStreamServer", () => {
     const socket = makeFakeSocket();
 
     httpServer.emit("upgrade", { url: "/media-stream?callId=call_1&token=good" }, socket, Buffer.alloc(0));
+    await flushMicrotasks();
 
     expect(verifyStreamToken).toHaveBeenCalledWith("call_1", "good");
     expect(handleUpgrade).toHaveBeenCalled();

@@ -27,6 +27,7 @@ const answerCall = jest.fn();
 const speakText = jest.fn();
 const startTranscription = jest.fn();
 const finalizeDialOutcome = jest.fn();
+const startRecording = jest.fn();
 
 jest.mock("@telephony/domain", () => ({
   placeOutboundCall: (...args: unknown[]) => placeOutboundCall(...args),
@@ -34,6 +35,7 @@ jest.mock("@telephony/domain", () => ({
   speakText: (...args: unknown[]) => speakText(...args),
   startTranscription: (...args: unknown[]) => startTranscription(...args),
   finalizeDialOutcome: (...args: unknown[]) => finalizeDialOutcome(...args),
+  startRecording: (...args: unknown[]) => startRecording(...args),
   decodeClientState: (clientState?: string) => {
     if (!clientState) return {};
     try {
@@ -166,6 +168,22 @@ describe("Call routes", () => {
 
       expect(startTranscription).not.toHaveBeenCalled();
       expect(speakText).not.toHaveBeenCalled();
+    });
+
+    it("starts recording an outbound call once it's answered (no dial-time equivalent of inbound's record-from-answer)", async () => {
+      callUpdate.mockResolvedValue({ id: "call_1", streamingEnabled: true, direction: "OUTBOUND" });
+
+      await sendWebhook("call.answered", { call_control_id: "ctrl_1" });
+
+      expect(startRecording).toHaveBeenCalledWith("ctrl_1");
+    });
+
+    it("does not start recording an inbound call (already requested inline via answerCall)", async () => {
+      callUpdate.mockResolvedValue({ id: "call_1", streamingEnabled: true, direction: "INBOUND" });
+
+      await sendWebhook("call.answered", { call_control_id: "ctrl_1" });
+
+      expect(startRecording).not.toHaveBeenCalled();
     });
   });
 

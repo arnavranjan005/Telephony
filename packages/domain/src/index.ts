@@ -43,6 +43,7 @@ export {
   speakText,
   startTranscription,
   hangupCall,
+  startRecording,
   decodeClientState,
 } from "./telnyx/callService";
 export type { StreamingOptions } from "./telnyx/callService";

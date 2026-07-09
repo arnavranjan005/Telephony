@@ -77,7 +77,7 @@ export async function placeOutboundCall(
 
   try {
     const streaming = options?.streamingEnabled
-      ? { streamUrl: buildStreamUrl(call.id), streamTrack: "both_tracks" as const, bidirectionalCodec: "L16" }
+      ? { streamUrl: await buildStreamUrl(call.id), streamTrack: "both_tracks" as const, bidirectionalCodec: "L16" }
       : undefined;
     const telnyxCall = await initiateOutboundCall(toNumber, { callId: call.id }, streaming);
     if (!telnyxCall.call_control_id) {

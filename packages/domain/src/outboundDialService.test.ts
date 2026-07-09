@@ -89,7 +89,7 @@ describe("placeOutboundCall", () => {
   it("opts the call into media streaming when streamingEnabled is requested", async () => {
     isNumberOnDnc.mockResolvedValue(false);
     callCreate.mockResolvedValue({ id: "call_1" });
-    buildStreamUrl.mockReturnValue("wss://example.com/media-stream?callId=call_1&token=abc");
+    buildStreamUrl.mockResolvedValue("wss://example.com/media-stream?callId=call_1&token=abc");
     initiateOutboundCall.mockResolvedValue({ call_control_id: "ctrl_1" });
     callUpdate.mockResolvedValue({ id: "call_1" });
 

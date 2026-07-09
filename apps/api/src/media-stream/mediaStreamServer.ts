@@ -16,21 +16,32 @@ export function attachMediaStreamServer(httpServer: HttpServer): void {
   const wss = new WebSocketServer({ noServer: true });
 
   httpServer.on("upgrade", (request, socket, head) => {
-    const url = new URL(request.url ?? "", "http://internal");
-    if (url.pathname !== env.MEDIA_STREAM_WS_PATH) {
-      socket.destroy();
-      return;
-    }
+    // verifyStreamToken is a Redis round-trip (see streamAuth.ts), so this
+    // handler can't stay synchronous - wrapped in its own IIFE (rather than
+    // making the "upgrade" listener itself async) so a rejection here
+    // (e.g. Redis unreachable) can't become an unhandled promise rejection
+    // and take down the whole server; the socket is destroyed either way.
+    void (async () => {
+      const url = new URL(request.url ?? "", "http://internal");
+      if (url.pathname !== env.MEDIA_STREAM_WS_PATH) {
+        socket.destroy();
+        return;
+      }
 
-    const callId = url.searchParams.get("callId");
-    const token = url.searchParams.get("token");
-    if (!callId || !token || !verifyStreamToken(callId, token)) {
-      socket.destroy();
-      return;
-    }
+      const callId = url.searchParams.get("callId");
+      const token = url.searchParams.get("token");
+      if (!callId || !token || !(await verifyStreamToken(callId, token))) {
+        socket.destroy();
+        return;
+      }
 
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      handleConnection(ws, callId);
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        handleConnection(ws, callId);
+      });
+    })().catch((error) => {
+      // eslint-disable-next-line no-console
+      console.error("Media stream upgrade failed:", error);
+      socket.destroy();
     });
   });
 }
