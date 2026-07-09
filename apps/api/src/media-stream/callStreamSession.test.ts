@@ -272,15 +272,63 @@ describe("CallStreamSession", () => {
     expect(hangupCall).not.toHaveBeenCalled();
   });
 
-  it("hangs up immediately without speaking the fallback line, when end_call was already requested before the turn failed", async () => {
+  it("speaks a canned goodbye (not the 'having trouble' line) and hangs up, when end_call was already requested before the turn failed", async () => {
     runStreamingConversationTurn.mockRejectedValue(new Error("boom"));
     callFindUnique.mockResolvedValue({ endCallRequested: true });
 
     transcriptHandler({ transcript: "bye", isFinal: true, speechFinal: true });
     await flushMicrotasks();
 
+    expect(sendSpeech).toHaveBeenCalledTimes(1);
+    expect(sendSpeech).toHaveBeenCalledWith("Alright, thanks for your time - goodbye!", expect.any(Function));
+    // Persisted like any other reply, so the transcript matches what the
+    // caller actually heard.
+    expect(conversationMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ role: "ASSISTANT", content: "Alright, thanks for your time - goodbye!" }),
+      })
+    );
     expect(hangupCall).toHaveBeenCalledWith("ctrl_1");
-    expect(sendSpeech).not.toHaveBeenCalled();
+  });
+
+  it("still hangs up when end_call was requested but the goodbye TTS itself fails", async () => {
+    runStreamingConversationTurn.mockRejectedValue(new Error("boom"));
+    callFindUnique.mockResolvedValue({ endCallRequested: true });
+    sendSpeech.mockImplementation(() => ({ cancel: jest.fn(), done: Promise.reject(new Error("tts down")) }));
+
+    transcriptHandler({ transcript: "bye", isFinal: true, speechFinal: true });
+    await flushMicrotasks();
+
+    expect(hangupCall).toHaveBeenCalledWith("ctrl_1");
+  });
+
+  it("does not let a failing end_call lookup escape (fire-and-forget context) - falls back to the trouble line instead", async () => {
+    runStreamingConversationTurn.mockRejectedValue(new Error("boom"));
+    // The turn failed because the DB is down - so the endCallRequested
+    // lookup in the recovery path hits the same dead DB.
+    callFindUnique.mockRejectedValue(new Error("db down"));
+
+    transcriptHandler({ transcript: "hello", isFinal: true, speechFinal: true });
+    await flushMicrotasks();
+
+    expect(sendSpeech).toHaveBeenCalledWith(
+      "Sorry, I'm having trouble on my end - could you give me just a moment?",
+      expect.any(Function)
+    );
+    expect(hangupCall).not.toHaveBeenCalled();
+  });
+
+  it("does not let a failing hangup escape when the caller already hung up on their own", async () => {
+    runStreamingConversationTurn.mockRejectedValue(new Error("boom"));
+    callFindUnique.mockResolvedValue({ endCallRequested: true });
+    hangupCall.mockRejectedValueOnce(new Error("call already ended"));
+
+    transcriptHandler({ transcript: "bye", isFinal: true, speechFinal: true });
+    await flushMicrotasks();
+
+    // The rejection is contained - reaching this assertion at all means
+    // handleTurnEnd's promise settled instead of escaping unhandled.
+    expect(hangupCall).toHaveBeenCalledWith("ctrl_1");
   });
 
   it("does not hang up (or speak) on a failed turn if the caller barged in before it failed, even with end_call set", async () => {
