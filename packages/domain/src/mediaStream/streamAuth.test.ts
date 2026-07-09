@@ -40,6 +40,20 @@ describe("streamAuth", () => {
     jest.useRealTimers();
   });
 
+  it("sweeps expired never-verified entries when issuing new tokens (no unbounded growth)", () => {
+    jest.useFakeTimers().setSystemTime(0);
+    const stale = issueStreamToken("call_never_connected");
+
+    jest.setSystemTime(6 * 60 * 1000); // stale entry is now past its TTL
+    issueStreamToken("call_2"); // issuing sweeps expired entries
+
+    // The stale entry is gone (not merely expired-but-resident): verification
+    // fails because the map no longer holds it.
+    expect(verifyStreamToken("call_never_connected", stale)).toBe(false);
+
+    jest.useRealTimers();
+  });
+
   describe("buildStreamUrl", () => {
     it("builds a wss:// URL with the callId and an issued token embedded", () => {
       const url = buildStreamUrl("call_1");

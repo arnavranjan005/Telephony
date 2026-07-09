@@ -6,7 +6,12 @@ import { callEventBus } from "../sse/eventBus";
 
 const createFollowUpSchema = z.object({
   leadId: z.string().min(1),
-  scheduledAt: z.string(),
+  // Any string parseable as a date, not just z.string().datetime()'s strict
+  // ISO subset - but an unparseable one must be a 400, not an Invalid Date
+  // handed to Prisma (which throws, surfacing as a 500).
+  scheduledAt: z.string().refine((value) => !Number.isNaN(new Date(value).getTime()), {
+    message: "scheduledAt must be a valid ISO 8601 datetime",
+  }),
   reason: z.string().optional(),
   streamingEnabled: z.boolean().optional(),
 });

@@ -22,8 +22,17 @@ const pendingTokens = new Map<string, PendingToken>();
  * stream_url is ever sent.
  */
 export function issueStreamToken(callId: string): string {
+  // Entries are normally consumed by verifyStreamToken, but a call whose
+  // stream never connects (failed dial, Telnyx never opens the WS) would
+  // leave its entry behind forever - swept here so the map can't grow
+  // unboundedly in a long-lived process.
+  const now = Date.now();
+  for (const [id, entry] of pendingTokens) {
+    if (now > entry.expiresAt) pendingTokens.delete(id);
+  }
+
   const token = crypto.randomBytes(24).toString("hex");
-  pendingTokens.set(callId, { token, expiresAt: Date.now() + TOKEN_TTL_MS });
+  pendingTokens.set(callId, { token, expiresAt: now + TOKEN_TTL_MS });
   return token;
 }
 

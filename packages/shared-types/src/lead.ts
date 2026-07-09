@@ -41,7 +41,10 @@ export const createLeadSchema = z.object({
 });
 export type CreateLeadInput = z.infer<typeof createLeadSchema>;
 
-export const updateLeadSchema = createLeadSchema.partial().omit({ phoneNumber: true }).extend({
+// consentGranted is create-only (it isn't a Lead column - the API maps it to
+// the consent fields at creation time). Consent changes on an existing lead
+// go through the dedicated consent endpoint instead.
+export const updateLeadSchema = createLeadSchema.partial().omit({ phoneNumber: true, consentGranted: true }).extend({
   phoneNumber: z.string().min(1).optional(),
 });
 export type UpdateLeadInput = z.infer<typeof updateLeadSchema>;

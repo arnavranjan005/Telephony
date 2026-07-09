@@ -47,6 +47,12 @@ describe("Follow-up routes", () => {
     expect(createFollowUp).not.toHaveBeenCalled();
   });
 
+  it("POST /api/followups rejects an unparseable scheduledAt with 400 instead of passing Invalid Date through", async () => {
+    const res = await request(app).post("/api/followups").send({ leadId: "lead_1", scheduledAt: "not-a-date" });
+    expect(res.status).toBe(400);
+    expect(createFollowUp).not.toHaveBeenCalled();
+  });
+
   it("GET /api/followups lists follow-ups", async () => {
     listFollowUps.mockResolvedValue([{ id: "fu_1" }]);
     const res = await request(app).get("/api/followups");
