@@ -42,6 +42,17 @@ export class CallStreamSession {
   private stt: DeepgramStreamClient | null = null;
   private activeTts: TtsSendHandle | null = null;
   private toolLock: Promise<void> = Promise.resolve();
+  // FIFO mutex for speak() - an interim reply (see onInterimReply in
+  // runTurn) is spoken fire-and-forget while its tool call keeps running, so
+  // a later speak() (the eventual final reply, or another interim reply from
+  // a subsequent round) can be requested before an earlier one finishes.
+  // Waiting on a single snapshotted `this.activeTts` handle isn't enough - a
+  // third call arriving while a second is still waiting on the first could
+  // also see the first's handle and race the second to claim `activeTts`,
+  // leaving two TTS streams sending frames concurrently. A real queue (same
+  // pattern as toolLock above) rules that out regardless of how many
+  // speak() calls stack up.
+  private ttsQueue: Promise<void> = Promise.resolve();
   private transcriptBuffer = "";
   private tools: ToolDefinition[] = [];
   private systemPrompt = SYSTEM_PROMPT;
@@ -71,7 +82,7 @@ export class CallStreamSession {
       ...buildSentimentTools(),
       ...buildCallControlTools({ callId: this.options.callId }),
     ];
-    this.systemPrompt = buildSystemPrompt(call?.campaignContact?.campaign);
+    this.systemPrompt = buildSystemPrompt(call?.campaignContact?.campaign, call?.direction);
 
     this.stt = new DeepgramStreamClient();
     this.stt.on("transcript", (event: DeepgramTranscriptEvent) => this.handleTranscript(event));
@@ -97,6 +108,8 @@ export class CallStreamSession {
 
     if (frame.event === "start" && !this.greeted) {
       this.greeted = true;
+      // eslint-disable-next-line no-console
+      console.log(`Media stream negotiated format for call ${this.options.callId}:`, frame.start.media_format);
       void this.speak("Hi, thanks for calling! How can I help you today?");
       return;
     }
@@ -143,7 +156,49 @@ export class CallStreamSession {
     this.state = "LISTENING";
   }
 
+  /**
+   * Invoked fire-and-forget (`void this.handleTurnEnd()`) from Deepgram event
+   * handlers, not from the WebSocket message handler's own promise chain - so
+   * any rejection here (e.g. the abort signal firing mid-generateContent on a
+   * barge-in) would otherwise be an unhandled rejection that crashes the
+   * whole process, taking down every other in-progress call. Catches
+   * everything and falls back to LISTENING so one bad turn can't kill the
+   * server or wedge this call.
+   */
   private async handleTurnEnd(): Promise<void> {
+    const version = this.turnVersion;
+    try {
+      await this.runTurn();
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error(`Turn failed for call ${this.options.callId}:`, error);
+      // Only speak the fallback if we'd actually committed to replying (state
+      // reached THINKING) and nothing superseded this turn in the meantime
+      // (e.g. a barge-in) - otherwise this would talk over/after a turn that
+      // isn't ours anymore. A caller who gets silence after "I can't hear
+      // you" has no idea whether to keep talking or hang up; this at least
+      // tells them something's wrong rather than leaving dead air.
+      if (this.state === "THINKING" && this.turnVersion === version) {
+        this.state = "LISTENING";
+        const fallbackReply = "Sorry, I'm having trouble on my end - could you give me just a moment?";
+        try {
+          await this.speak(fallbackReply);
+          // Without this the transcript shows dead air even though the AI
+          // was actually talking - which is exactly what made this failure
+          // mode look like a silent/audio bug instead of the rate-limit
+          // errors it actually was.
+          await this.persistMessage({ role: "assistant", content: fallbackReply }, false);
+        } catch (speakError) {
+          // eslint-disable-next-line no-console
+          console.error(`Fallback speech also failed for call ${this.options.callId}:`, speakError);
+        }
+      } else if (this.state === "THINKING") {
+        this.state = "LISTENING";
+      }
+    }
+  }
+
+  private async runTurn(): Promise<void> {
     if (this.state !== "LISTENING") return; // already handled (e.g. speechFinal beat a redundant utteranceEnd)
 
     const transcript = this.transcriptBuffer.trim();
@@ -176,15 +231,30 @@ export class CallStreamSession {
       getCurrentVersion: () => this.turnVersion,
       signal: this.abortController.signal,
       runExclusive: (fn) => this.runExclusive(fn),
+      // Speaks any text the model attaches to a tool call (e.g. an apology or
+      // acknowledgement) as soon as it's produced, rather than letting it sit
+      // silent in the transcript until - if ever - a later text-only reply
+      // gets spoken. Guarded on version: a barge-in between the round
+      // starting and this firing means it isn't ours to speak anymore.
+      onInterimReply: (text) => {
+        if (this.turnVersion === version) void this.speak(text);
+      },
     };
 
-    const { history: updatedHistory, finalReply } = await runStreamingConversationTurn(
-      getAIAgent(),
-      this.history,
-      this.tools,
-      this.systemPrompt,
-      context
-    );
+    let updatedHistory: AgentMessage[];
+    let finalReply: string | null;
+    try {
+      ({ history: updatedHistory, finalReply } = await runStreamingConversationTurn(
+        getAIAgent(),
+        this.history,
+        this.tools,
+        this.systemPrompt,
+        context
+      ));
+    } catch (error) {
+      if (this.turnVersion !== version) return; // aborted by our own barge-in - not a real failure
+      throw error;
+    }
     this.history = updatedHistory;
 
     if (this.turnVersion !== version) return; // superseded while generating - stay in LISTENING, don't speak
@@ -208,9 +278,27 @@ export class CallStreamSession {
     }
   }
 
-  private async speak(text: string): Promise<void> {
-    this.state = "SPEAKING";
+  // Queues onto ttsQueue rather than running immediately - see the field's
+  // comment. Version is captured now (at request time), not when this
+  // actually gets to run, so a speak() queued behind another one correctly
+  // detects a barge-in that happened while it was waiting its turn.
+  private speak(text: string): Promise<void> {
     const version = this.turnVersion;
+    const run = this.ttsQueue.then(
+      () => this.speakNow(text, version),
+      () => this.speakNow(text, version)
+    );
+    this.ttsQueue = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  private async speakNow(text: string, version: number): Promise<void> {
+    if (this.turnVersion !== version) return; // superseded while queued behind an earlier speak()
+
+    this.state = "SPEAKING";
     this.activeTts = sendSpeech(text, (payload) => this.options.sendToTelnyx(encodeMediaFrame(payload)));
     await this.activeTts.done;
     if (this.turnVersion === version) {

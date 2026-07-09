@@ -103,12 +103,16 @@ describe("CallStreamSession", () => {
     expect(sttConnect).toHaveBeenCalled();
   });
 
-  it("speaks a greeting once when the Telnyx start frame arrives", () => {
+  it("speaks a greeting once when the Telnyx start frame arrives", async () => {
     session.handleTelnyxFrame(JSON.stringify({ event: "start", sequence_number: "1", start: { call_control_id: "ctrl_1", stream_id: "s1", media_format: {} } }));
+    // speak() queues onto ttsQueue (see callStreamSession.ts) rather than
+    // calling sendSpeech synchronously, so it needs a tick to actually run.
+    await flushMicrotasks();
 
     expect(sendSpeech).toHaveBeenCalledWith("Hi, thanks for calling! How can I help you today?", expect.any(Function));
 
     session.handleTelnyxFrame(JSON.stringify({ event: "start", sequence_number: "2", start: { call_control_id: "ctrl_1", stream_id: "s1", media_format: {} } }));
+    await flushMicrotasks();
     expect(sendSpeech).toHaveBeenCalledTimes(1); // not re-greeted
   });
 
