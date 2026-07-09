@@ -76,6 +76,7 @@ type TelnyxWebhookPayload = {
       to?: string;
       hangup_cause?: string;
       transcription_data?: { transcript?: string; is_final?: boolean };
+      recording_urls?: { mp3?: string | null; wav?: string | null };
     };
   };
 };
@@ -162,7 +163,16 @@ export async function handleTelnyxWebhook(req: Request, res: Response) {
           const streaming = call.streamingEnabled
             ? { streamUrl: buildStreamUrl(call.id), streamTrack: "both_tracks" as const, bidirectionalCodec: "L16" }
             : undefined;
-          await answerCall(callControlId, streaming);
+          await answerCall(callControlId, streaming, true);
+        }
+        break;
+      }
+
+      case "call.recording.saved": {
+        const call = await prisma.call.findUnique({ where: { telnyxCallControlId: callControlId } });
+        const recordingUrl = payload.recording_urls?.mp3;
+        if (call && recordingUrl) {
+          await prisma.call.update({ where: { id: call.id }, data: { recordingUrl } });
         }
         break;
       }
@@ -214,10 +224,14 @@ export async function handleTelnyxWebhook(req: Request, res: Response) {
         const existingCall = await prisma.call.findUnique({ where: { telnyxCallControlId: callControlId } });
         const wasAnswered = existingCall?.status === CallStatus.IN_PROGRESS;
         const status = mapHangupToStatus(payload.hangup_cause, wasAnswered);
+        const endedAt = new Date();
+        const durationSeconds = existingCall?.startedAt
+          ? Math.max(0, Math.round((endedAt.getTime() - existingCall.startedAt.getTime()) / 1000))
+          : null;
 
         const call = await prisma.call.update({
           where: { telnyxCallControlId: callControlId },
-          data: { status, endedAt: new Date(), outcome: payload.hangup_cause ?? null },
+          data: { status, endedAt, durationSeconds, outcome: payload.hangup_cause ?? null },
         });
         await finalizeDialOutcome(call.id, status);
         callEventBus.publish(call.id, "call.hangup", { hangupCause: payload.hangup_cause, status });

@@ -10,6 +10,27 @@ export type DialResult =
   | { outcome: "skipped_no_consent" }
   | { outcome: "failed"; error: string; callId: string };
 
+/**
+ * The Telnyx SDK's TelnyxError sets `this.message` from the raw response
+ * body's top-level `message` field, but Telnyx's actual API error responses
+ * use `{errors: [{code, detail}]}` with no top-level `message` - so
+ * `error.message` is silently `undefined` for every real Telnyx API failure,
+ * losing the actual reason (e.g. "10010: No Routes Found") and leaving
+ * Call.outcome as null. The real detail lives on `error.raw.errors`.
+ */
+function extractErrorMessage(error: unknown): string {
+  if (error && typeof error === "object" && "raw" in error) {
+    const raw = (error as { raw?: { errors?: Array<{ code?: string; detail?: string }> } }).raw;
+    const detail = raw?.errors?.[0]?.detail;
+    if (detail) {
+      const code = raw?.errors?.[0]?.code;
+      return code ? `${code}: ${detail}` : detail;
+    }
+  }
+  if (error instanceof Error && error.message) return error.message;
+  return String(error);
+}
+
 export interface PlaceOutboundCallOptions {
   /**
    * Require the lead to have on-file TCPA consent (Lead.consentStatus ===
@@ -70,7 +91,7 @@ export async function placeOutboundCall(
 
     return { outcome: "dialed", callId: call.id };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = extractErrorMessage(error);
     await prisma.call.update({ where: { id: call.id }, data: { status: CallStatus.FAILED, outcome: message } });
     return { outcome: "failed", error: message, callId: call.id };
   }

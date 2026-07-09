@@ -185,7 +185,7 @@ describe("Call routes", () => {
       expect(callCreate).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ leadId: "lead_1" }) })
       );
-      expect(answerCall).toHaveBeenCalledWith("ctrl_1", undefined);
+      expect(answerCall).toHaveBeenCalledWith("ctrl_1", undefined, true); // record: true - see callController.ts
     });
 
     it("skips lead linking when the caller's number is missing from the payload", async () => {
