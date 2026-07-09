@@ -13,6 +13,10 @@ updates, and a Next.js admin panel.
 This is a foundation to build on, not the full feature set described in the
 requirements doc.
 
+Deploying to production? See [DEPLOYMENT.md](DEPLOYMENT.md) — build artifacts,
+required environment variables, per-app deployment guides, first-deploy wiring
+(Telnyx webhooks, Google OAuth), topology constraints, and security notes.
+
 ## Monorepo layout (Nx)
 
 This is an Nx monorepo (npm workspaces under the hood — deliberately no
