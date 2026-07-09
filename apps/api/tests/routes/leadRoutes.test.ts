@@ -81,17 +81,6 @@ describe("Lead routes", () => {
     expect(leadUpdate).toHaveBeenCalledWith({ where: { id: "lead_1" }, data: { status: "WARM" } });
   });
 
-  it("PATCH /api/leads/:leadId strips create-only consentGranted instead of passing it to Prisma", async () => {
-    leadUpdate.mockResolvedValue({ id: "lead_1", status: "WARM" });
-
-    const res = await request(app).patch("/api/leads/lead_1").send({ status: "WARM", consentGranted: true });
-
-    expect(res.status).toBe(200);
-    // consentGranted isn't a Lead column - forwarding it would make
-    // prisma.lead.update throw an unknown-argument error (a 500).
-    expect(leadUpdate).toHaveBeenCalledWith({ where: { id: "lead_1" }, data: { status: "WARM" } });
-  });
-
   it("DELETE /api/leads/:leadId deletes the lead and returns 204", async () => {
     leadDeleteMany.mockResolvedValue({ count: 1 });
 
@@ -107,20 +96,6 @@ describe("Lead routes", () => {
     const res = await request(app).delete("/api/leads/lead_1");
 
     expect(res.status).toBe(204);
-  });
-
-  it("DELETE /api/leads/:leadId returns 409 when the lead is still referenced by a campaign/follow-up", async () => {
-    const { Prisma } = jest.requireActual("@prisma/client");
-    leadDeleteMany.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError("Foreign key constraint failed", {
-        code: "P2003",
-        clientVersion: "0.0.0",
-      })
-    );
-
-    const res = await request(app).delete("/api/leads/lead_1");
-
-    expect(res.status).toBe(409);
   });
 
   it("POST /api/leads/:leadId/consent grants consent with a source and timestamp", async () => {

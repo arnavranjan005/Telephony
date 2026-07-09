@@ -52,11 +52,5 @@ export async function runConversationTurn(
     }
   }
 
-  // The fallback is spoken to the caller (handleCallerUtterance speaks
-  // whatever finalReply it gets), so it has to land in history too -
-  // otherwise it's never persisted to the transcript and the model doesn't
-  // know it said it on the next turn.
-  const fallbackReply = "I'm sorry, I wasn't able to complete that request right now.";
-  messages.push({ role: "assistant", content: fallbackReply });
-  return { history: messages, finalReply: fallbackReply };
+  return { history: messages, finalReply: "I'm sorry, I wasn't able to complete that request right now." };
 }

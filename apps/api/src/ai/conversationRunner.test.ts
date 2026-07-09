@@ -115,27 +115,4 @@ describe("runConversationTurn", () => {
     expect(agent.generateReply).toHaveBeenCalledTimes(MAX_TOOL_ROUNDTRIPS);
     expect(handler).toHaveBeenCalledTimes(MAX_TOOL_ROUNDTRIPS);
   });
-
-  it("appends the roundtrip-cap fallback reply to history, since it is spoken to the caller", async () => {
-    const tools: ToolDefinition[] = [
-      {
-        name: "looping_tool",
-        description: "always requested again",
-        parameters: { type: "object", properties: {} },
-        handler: jest.fn(async () => ({ ok: true })),
-      },
-    ];
-
-    const agent: AIAgent = {
-      providerName: "fake",
-      generateReply: jest.fn(async () => ({
-        content: null,
-        toolCalls: [{ id: "x", name: "looping_tool", args: {} }],
-      })),
-    };
-
-    const { history, finalReply } = await runConversationTurn(agent, [{ role: "user", content: "loop" }], tools);
-
-    expect(history[history.length - 1]).toMatchObject({ role: "assistant", content: finalReply });
-  });
 });

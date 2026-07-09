@@ -60,11 +60,7 @@ export async function getLead(req: Request, res: Response) {
   res.json({ lead });
 }
 
-// consentGranted is create-only sugar: it is not a Lead column, so passing it
-// through to prisma.lead.update() throws an unknown-argument error (a 500 for
-// the client). Consent changes on an existing lead go through the dedicated
-// POST /:leadId/consent endpoint, which also sets consentedAt server-side.
-const updateLeadSchema = createLeadSchema.partial().omit({ phoneNumber: true, consentGranted: true }).extend({
+const updateLeadSchema = createLeadSchema.partial().omit({ phoneNumber: true }).extend({
   phoneNumber: z.string().min(1).optional(),
 });
 
@@ -102,20 +98,9 @@ export async function setLeadConsent(req: Request, res: Response) {
 }
 
 export async function deleteLead(req: Request, res: Response) {
-  try {
-    // deleteMany (not delete) so a repeat call on an already-deleted lead is a
-    // no-op 204 instead of throwing "record not found" - DELETE should be
-    // idempotent.
-    await prisma.lead.deleteMany({ where: { id: req.params.leadId } });
-  } catch (error) {
-    // CampaignContact/FollowUp reference Lead with required (Restrict) FKs,
-    // so a lead that's part of a campaign or has follow-ups can't be deleted.
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
-      return res.status(409).json({
-        error: "This lead is referenced by a campaign or follow-up and can't be deleted",
-      });
-    }
-    throw error;
-  }
+  // deleteMany (not delete) so a repeat call on an already-deleted lead is a
+  // no-op 204 instead of throwing "record not found" - DELETE should be
+  // idempotent.
+  await prisma.lead.deleteMany({ where: { id: req.params.leadId } });
   res.status(204).send();
 }
