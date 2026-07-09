@@ -70,6 +70,13 @@ picks the implementation based on `AI_PROVIDER`. To add another provider
 `providers/` and add a case in `agentFactory.ts` — nothing else in the app
 changes.
 
+Because a reply is generated while a caller waits on a live call, `GoogleAgent`
+bounds every request: each `generateContent` call is capped at 10s (live-measured
+against real API latency — see the comment on `REQUEST_TIMEOUT_MS`), and a 429/503
+gets exactly one quick retry after 600ms rather than Google's suggested 15-20s
+backoff. Anything that still fails surfaces as the call's fallback line instead
+of dead air.
+
 Tools are declared as plain objects (`ToolDefinition`: name, description,
 JSON-schema-like parameters, and a handler function) in `apps/api/src/ai/tools/`,
 so they're also provider-agnostic. `apps/api/src/ai/conversationRunner.ts`
@@ -215,7 +222,9 @@ through an orchestrator (Nx, and potentially others) that forwards an existing
    created via `POST /api/calls/outbound`. For inbound calls, the caller's phone number is looked up
    (or a new `Lead` is created) via an upsert on `Lead.phoneNumber` and linked to the `Call` — so a
    returning caller is recognized as the same lead, and a first-time caller is tracked automatically
-   without anyone having to create a lead for them first.
+   without anyone having to create a lead for them first. Inbound calls are answered with recording
+   enabled (`record-from-answer`, dual-channel mp3) for post-call audio verification; when Telnyx's
+   `call.recording.saved` webhook later arrives, the URL is stored on `Call.recordingUrl`.
 2. `call.answered` → starts Telnyx transcription and speaks a greeting.
 3. `call.transcription` (final transcript) → `handleCallerUtterance` persists the utterance, runs
    the AI agent with calendar/lead tools attached, persists the resulting turns, publishes them to
@@ -224,6 +233,7 @@ through an orchestrator (Nx, and potentially others) that forwards an existing
    happened), it's `COMPLETED` regardless of hangup cause. Otherwise Telnyx's `hangup_cause` is mapped
    to `BUSY` / `NO_ANSWER` / `CANCELED` / `FAILED` and stored on `Call.outcome`, so unanswered dials
    are distinguishable from completed ones instead of everything being marked `COMPLETED`.
+   `Call.durationSeconds` is computed here from `startedAt` (answer time) to hangup.
 
 If the call belongs to a campaign contact, the campaign's `script` is appended to the AI agent's
 system prompt for that call. The agent also has `add_to_dnc` (adds the caller to the DNC list the
@@ -344,7 +354,11 @@ The legacy webhook-based flow still exists as a parallel path for anyone who opt
   tool-call/tool-result message as it actually happens, the final reply only if not superseded) -
   there's no single "end of turn" instant to batch at once a turn can be abandoned mid-way.
 - **New env vars**: `MEDIA_STREAM_ENABLED`, `MEDIA_STREAM_WS_PATH`, `MEDIA_STREAM_SAMPLE_RATE`,
-  `DEEPGRAM_API_KEY`, `DEEPGRAM_MODEL`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` (see `.env.example`).
+  `DEEPGRAM_API_KEY`, `DEEPGRAM_MODEL`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, plus optional
+  voice tuning passed through as ElevenLabs `voice_settings` on every TTS request
+  (`ELEVENLABS_STABILITY`, `ELEVENLABS_SIMILARITY_BOOST`, `ELEVENLABS_STYLE`,
+  `ELEVENLABS_SPEAKER_BOOST`, `ELEVENLABS_SPEED` — defaults favor a warmer, more natural phone
+  voice than ElevenLabs' flatter stock settings). See `.env.example`.
 
 ## Automated dialing (campaigns & follow-ups) — distributed via BullMQ
 
@@ -529,6 +543,20 @@ loop) runs unmocked:
   contacts not yet claimed when the pause lands stay `PENDING` (a contact already claimed the instant
   before pause still completes that one in-flight dial - you can't un-ring a phone that already rang)
   and get picked up again the next time the campaign is started.
+- `mediaStreamBargeIn.e2e-test.ts` — boots the real Express app with the real media-stream WebSocket
+  server attached (`attachMediaStreamServer`, exactly as `apps/api/src/server.ts` wires it in
+  production); a real `ws` client plays Telnyx's role, opening the connection with the real
+  single-use `streamAuth` token and sending `start`/`media` frames while asserting on the
+  `media`/`clear` frames sent back. Mocks `telnyx`, `@deepgram/sdk` (to drive transcript/utterance
+  events on cue instead of sending real audio), `GoogleAgent` (same provider-seam mocking as
+  `aiConversation.e2e-test.ts`), and `global.fetch` (ElevenLabs) — the WS upgrade + token auth,
+  `CallStreamSession`'s state machine, barge-in `clear` handling, the tool-calling loop, and Prisma
+  persistence all run unmocked.
+- `campaignFollowUpStreaming.e2e-test.ts` — mocks only `telnyx`; boots a real in-process BullMQ
+  `Worker` and proves automated dials (campaign contacts and follow-ups) actually request Telnyx
+  bidirectional media streaming when opted in — closing the gap where
+  `processCampaignContactJob`/`processFollowUpJob` used to always dial via the legacy webhook path
+  regardless of the streaming flags.
 
 A `docker-compose.yml` at the repo root defines throwaway Postgres (`localhost:55432`) and Redis
 (`localhost:56379`) containers on non-default ports, so they won't collide with anything else you have
