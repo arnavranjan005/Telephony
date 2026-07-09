@@ -127,7 +127,13 @@ export class GoogleAgent implements AIAgent {
   // and the retry below would then make a second equally slow attempt,
   // stacking into ~20s of dead air on a live call before the fallback line
   // ever played. Every attempt is now capped at this, win or lose.
-  private static readonly REQUEST_TIMEOUT_MS = 6000;
+  //
+  // Originally 6000 - live-tested against real API latency and found that
+  // was cutting off a large fraction of calls that were going to genuinely
+  // succeed a couple seconds later (5 direct calls: latencies of 2.5s, 3.0s,
+  // 5.6s, 9.9s, plus one real 9.4s 503 - a 6s cap was a false-positive
+  // timeout on the 9.9s success). Widened to cover that observed range.
+  private static readonly REQUEST_TIMEOUT_MS = 10000;
 
   private async generateContentWithTimeout(
     client: GoogleGenAI,
