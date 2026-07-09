@@ -94,6 +94,14 @@ jest.mock("googleapis", () => ({
 type DeepgramSocketMock = {
   sendMedia: jest.Mock;
   close: jest.Mock;
+  // client.listen.v1.connect() only constructs the socket wrapper - the real
+  // DeepgramStreamClient.connect() also calls these two before sending any
+  // audio (see deepgramClient.ts). Without them here, every real
+  // CallStreamSession.start() in this file throws "this.socket.connect is
+  // not a function" and no test ever gets past the initial greeting.
+  connect: jest.Mock;
+  waitForOpen: jest.Mock;
+  readyState: number;
   messageHandler?: (message: unknown) => void;
 };
 
@@ -104,7 +112,13 @@ jest.mock("@deepgram/sdk", () => ({
     listen: {
       v1: {
         connect: jest.fn(async () => {
-          const socket: DeepgramSocketMock = { sendMedia: jest.fn(), close: jest.fn() };
+          const socket: DeepgramSocketMock = {
+            sendMedia: jest.fn(),
+            close: jest.fn(),
+            connect: jest.fn(),
+            waitForOpen: jest.fn(async () => undefined),
+            readyState: 1, // OPEN - see deepgramClient.ts's sendAudio guard
+          };
           const onFn = jest.fn((event: string, handler: (message: unknown) => void) => {
             if (event === "message") socket.messageHandler = handler;
           });
@@ -215,6 +229,20 @@ function sendInboundAudio(socket: WebSocket) {
   );
 }
 
+/** Closes this test's ws client and waits for the close handshake to
+ * actually complete server-side, not just for close() to be called -
+ * otherwise a still-draining connection can make afterAll's server.close()
+ * hang waiting on a socket the underlying http.Server still considers open
+ * (WebSocket upgrades detach from Express's own connection tracking, but the
+ * raw socket still belongs to the http.Server that accepted it). */
+function closeSocket(socket: WebSocket): Promise<void> {
+  return new Promise((resolve) => {
+    if (socket.readyState === WebSocket.CLOSED) return resolve();
+    socket.once("close", () => resolve());
+    socket.close();
+  });
+}
+
 function emitTranscript(transcript: string, isFinal: boolean, speechFinal: boolean) {
   lastDeepgramSocket!.messageHandler!({
     type: "Results",
@@ -307,6 +335,16 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
     expect(dncEntry.reason).toBe("asked to stop calling");
     expect(dncEntry.source).toBe("CALLER_REQUEST");
 
+    // The DncEntry above is created mid-turn (inside the tool call), before
+    // that same round's own messages - and the following round's final
+    // confirmation - get persisted. Wait for the actual terminal state
+    // instead of racing those still-in-flight persistMessage() calls.
+    await waitFor(
+      async () =>
+        (await prisma.conversationMessage.count({ where: { callId: call.id, role: "ASSISTANT", toolName: null } })) >= 1,
+      15000
+    );
+
     const messages = await prisma.conversationMessage.findMany({ where: { callId: call.id }, orderBy: { createdAt: "asc" } });
     expect(messages.map((m) => [m.role, m.toolName, m.interrupted])).toEqual([
       ["USER", null, false],
@@ -320,7 +358,7 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
     const mediaFramesAfterReply = frames.filter((f) => f.event === "media");
     expect(mediaFramesAfterReply.length).toBeGreaterThan(1); // greeting + at least one reply frame
 
-    client.close();
+    await closeSocket(client);
   });
 
   it("barge-in mid-reply sends a real clear frame before any further audio, and the interruption starts a fresh turn", async () => {
@@ -367,7 +405,7 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
     const userMessages = messages.filter((m) => m.role === "USER");
     expect(userMessages.map((m) => m.content)).toEqual(["tell me about your hours", "what about Friday"]);
 
-    client.close();
+    await closeSocket(client);
   });
 
   it("negotiates a follow-up time outside legal calling hours to a real FollowUp row + enqueued BullMQ job, over the real stream", async () => {
@@ -415,7 +453,16 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
 
     emitTranscript("can you call me back tomorrow at 3am my time about pricing", true, true);
 
-    await waitFor(async () => (await prisma.followUp.findFirst({ where: { leadId: call.leadId! } })) !== null, 15000);
+    // The FollowUp row is created mid-turn (inside the second schedule_followup
+    // tool call), before that same round's own messages - and well before the
+    // final round's confirmation - get persisted. Waiting on the FollowUp
+    // alone races the still-in-flight later persistMessage() calls; wait for
+    // the actual terminal state (the final spoken confirmation) instead.
+    await waitFor(
+      async () =>
+        (await prisma.conversationMessage.count({ where: { callId: call.id, role: "ASSISTANT", toolName: null } })) >= 1,
+      15000
+    );
 
     const messages = await prisma.conversationMessage.findMany({ where: { callId: call.id }, orderBy: { createdAt: "asc" } });
     expect(messages.map((m) => [m.role, m.toolName])).toEqual([
@@ -444,7 +491,7 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
     // The confirmation was actually spoken back as real media frames.
     await waitFor(() => frames.filter((f) => f.event === "media").length > 1);
 
-    client.close();
+    await closeSocket(client);
   });
 
   it("drives a caller utterance through update_lead_status to a real Lead row update, over the real stream", async () => {
@@ -472,6 +519,16 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
 
     await waitFor(async () => (await prisma.lead.findUniqueOrThrow({ where: { id: call.leadId! } })).status === LeadStatus.HOT, 15000);
 
+    // The lead update above is written mid-turn (inside the tool call),
+    // before that same round's own messages - and the following round's
+    // final confirmation - get persisted. Wait for the actual terminal state
+    // instead of racing those still-in-flight persistMessage() calls.
+    await waitFor(
+      async () =>
+        (await prisma.conversationMessage.count({ where: { callId: call.id, role: "ASSISTANT", toolName: null } })) >= 1,
+      15000
+    );
+
     const messages = await prisma.conversationMessage.findMany({ where: { callId: call.id }, orderBy: { createdAt: "asc" } });
     expect(messages.map((m) => [m.role, m.toolName])).toEqual([
       ["USER", null],
@@ -486,7 +543,7 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
 
     await waitFor(() => frames.filter((f) => f.event === "media").length > 1);
 
-    client.close();
+    await closeSocket(client);
   });
 
   it("drives a caller utterance through availability-check -> booking tool calls to a real Appointment row, over the real stream", async () => {
@@ -543,6 +600,16 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
 
     await waitFor(async () => (await prisma.appointment.findFirst({ where: { callId: call.id } })) !== null, 15000);
 
+    // The appointment above is created mid-turn (inside the second tool
+    // call), before that same round's own messages - and the final round's
+    // confirmation - get persisted. Wait for the actual terminal state
+    // instead of racing those still-in-flight persistMessage() calls.
+    await waitFor(
+      async () =>
+        (await prisma.conversationMessage.count({ where: { callId: call.id, role: "ASSISTANT", toolName: null } })) >= 1,
+      15000
+    );
+
     const messages = await prisma.conversationMessage.findMany({ where: { callId: call.id }, orderBy: { createdAt: "asc" } });
     expect(messages.map((m) => [m.role, m.toolName])).toEqual([
       ["USER", null],
@@ -564,6 +631,6 @@ describe("media-stream barge-in e2e (real Postgres + real WebSocket, mocked Teln
 
     await waitFor(() => frames.filter((f) => f.event === "media").length > 1);
 
-    client.close();
+    await closeSocket(client);
   });
 });
