@@ -182,6 +182,7 @@ describe("call lifecycle e2e (real Postgres + Redis)", () => {
       .post("/api/campaigns")
       .send({
         name: "e2e campaign",
+        script: "Ask about renewal",
         contacts: [{ phoneNumber: "+15552220001" }, { phoneNumber: "+15552220002" }, { phoneNumber: "+15552220003" }],
       });
     expect(createRes.status).toBe(201);

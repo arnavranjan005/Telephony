@@ -188,6 +188,11 @@ model Campaign {
   name             String
   script           String?
   objectionPlaybook String?
+  // Spoken verbatim the instant an outbound call for this campaign connects
+  // (before the AI model is ever invoked - see callStreamSession.ts) rather
+  // than waiting for the callee to speak first. Falls back to a generic
+  // default (resolveGreeting in callConversationService.ts) when unset.
+  openingLine      String?
   status           CampaignStatus @default(DRAFT)
   fromNumber       String?
   streamingEnabled Boolean        @default(true)

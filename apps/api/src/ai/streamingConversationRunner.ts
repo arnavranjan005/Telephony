@@ -110,7 +110,18 @@ export async function runStreamingConversationTurn(
 
       const assistantMessage: AgentMessage = { role: "assistant", content: finalReply };
       messages.push(assistantMessage);
-      await persistMessage(context.callId, assistantMessage, false);
+      try {
+        await persistMessage(context.callId, assistantMessage, false);
+      } catch (error) {
+        // The reply itself was already successfully generated - a DB hiccup
+        // here is a transcript-logging failure, not a reason to throw away a
+        // real reply the caller is about to hear (and, if this was the
+        // goodbye after end_call, the caller's only chance to hear it before
+        // the line goes dead). Losing this one row is preferable to losing
+        // the reply.
+        // eslint-disable-next-line no-console
+        console.error(`Failed to persist assistant reply for call ${context.callId}:`, error);
+      }
       return { history: messages, finalReply };
     }
 

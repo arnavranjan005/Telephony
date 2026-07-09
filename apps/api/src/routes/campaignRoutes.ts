@@ -3,6 +3,7 @@ import {
   getCampaignById,
   getCampaigns,
   getObjectionBaseline,
+  getOpeningLineDefault,
   postCampaign,
   postPauseCampaign,
   postStartCampaign,
@@ -16,6 +17,7 @@ router.get("/", getCampaigns);
 // Must come before "/:campaignId" - otherwise Express would match this
 // literal path as a campaignId param instead.
 router.get("/objection-baseline", getObjectionBaseline);
+router.get("/opening-line-default", getOpeningLineDefault);
 router.get("/:campaignId", getCampaignById);
 router.post("/:campaignId/start", postStartCampaign);
 router.post("/:campaignId/pause", postPauseCampaign);

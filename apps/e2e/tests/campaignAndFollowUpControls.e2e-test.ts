@@ -103,7 +103,9 @@ describe("campaign/follow-up controls e2e (real Postgres + Redis + worker, mocke
       // throttling is still provable) while keeping total dial time well
       // within this test's timeout even under a loaded/contended sandbox.
       const contacts = Array.from({ length: 8 }, (_, i) => ({ phoneNumber: `+1555777${String(i).padStart(4, "0")}` }));
-      const createRes = await request(app).post("/api/campaigns").send({ name: "rate-limit e2e campaign", contacts });
+      const createRes = await request(app)
+        .post("/api/campaigns")
+        .send({ name: "rate-limit e2e campaign", script: "Ask about renewal", contacts });
       const campaignId = createRes.body.campaign.id;
       const leadIds = createRes.body.campaign.contacts.map((c: { leadId: string }) => c.leadId);
       await prisma.lead.updateMany({ where: { id: { in: leadIds } }, data: { consentStatus: ConsentStatus.GRANTED } });
@@ -151,7 +153,9 @@ describe("campaign/follow-up controls e2e (real Postgres + Redis + worker, mocke
       // racing the worker for every single contact, while keeping total
       // dial time well within this test's timeout under a contended sandbox.
       const contacts = Array.from({ length: 8 }, (_, i) => ({ phoneNumber: `+1555888${String(i).padStart(4, "0")}` }));
-      const createRes = await request(app).post("/api/campaigns").send({ name: "pause e2e campaign", contacts });
+      const createRes = await request(app)
+        .post("/api/campaigns")
+        .send({ name: "pause e2e campaign", script: "Ask about renewal", contacts });
       const campaignId = createRes.body.campaign.id;
       const leadIds = createRes.body.campaign.contacts.map((c: { leadId: string }) => c.leadId);
       await prisma.lead.updateMany({ where: { id: { in: leadIds } }, data: { consentStatus: ConsentStatus.GRANTED } });
@@ -209,7 +213,9 @@ describe("campaign/follow-up controls e2e (real Postgres + Redis + worker, mocke
 
   it("resumes a paused campaign by starting it again, re-enqueuing any contacts still PENDING", async () => {
     const contacts = [{ phoneNumber: "+15559990001" }, { phoneNumber: "+15559990002" }];
-    const createRes = await request(app).post("/api/campaigns").send({ name: "resume e2e campaign", contacts });
+    const createRes = await request(app)
+      .post("/api/campaigns")
+      .send({ name: "resume e2e campaign", script: "Ask about renewal", contacts });
     const campaignId = createRes.body.campaign.id;
     const contactIds: string[] = createRes.body.campaign.contacts.map((c: { id: string }) => c.id);
     const leadIds = createRes.body.campaign.contacts.map((c: { leadId: string }) => c.leadId);

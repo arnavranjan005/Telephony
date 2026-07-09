@@ -21,6 +21,7 @@ jest.mock("./conversationHistory", () => ({
 import {
   buildSystemPrompt,
   OBJECTION_HANDLING_BASELINE,
+  resolveGreeting,
   SYSTEM_PROMPT,
   VERBAL_FILLER_GUIDANCE,
 } from "./callConversationService";
@@ -92,5 +93,28 @@ describe("buildSystemPrompt", () => {
   it("appends inbound/outbound direction guidance when a direction is given", () => {
     expect(buildSystemPrompt(null, "INBOUND" as never)).toContain("This caller dialed in to reach you");
     expect(buildSystemPrompt(null, "OUTBOUND" as never)).toContain("You initiated this call");
+  });
+});
+
+describe("resolveGreeting", () => {
+  it("uses the fixed inbound greeting regardless of any campaign, since inbound calls have none", () => {
+    expect(resolveGreeting("INBOUND" as never, { openingLine: "should be ignored" })).toBe(
+      "Hi, thanks for calling! How can I help you today?"
+    );
+    expect(resolveGreeting(undefined, null)).toBe("Hi, thanks for calling! How can I help you today?");
+  });
+
+  it("uses the campaign's openingLine for an outbound call when set", () => {
+    expect(resolveGreeting("OUTBOUND" as never, { openingLine: "Hi, this is Acquire Right calling." })).toBe(
+      "Hi, this is Acquire Right calling."
+    );
+  });
+
+  it("falls back to a generic default for outbound when the campaign has no openingLine (or there's no campaign at all, e.g. a follow-up call)", () => {
+    const expected = "Hi, thanks for picking up - this is an automated call, do you have a quick moment?";
+    expect(resolveGreeting("OUTBOUND" as never, null)).toBe(expected);
+    expect(resolveGreeting("OUTBOUND" as never, {})).toBe(expected);
+    expect(resolveGreeting("OUTBOUND" as never, { openingLine: "" })).toBe(expected);
+    expect(resolveGreeting("OUTBOUND" as never, { openingLine: "   " })).toBe(expected);
   });
 });

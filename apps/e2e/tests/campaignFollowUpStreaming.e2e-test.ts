@@ -98,7 +98,7 @@ describe("campaign/follow-up streaming opt-in e2e (real Postgres + Redis + worke
 
     const createRes = await request(app)
       .post("/api/campaigns")
-      .send({ name: "streaming e2e campaign", streamingEnabled: true, contacts: [{ leadId }] });
+      .send({ name: "streaming e2e campaign", script: "Ask about renewal", streamingEnabled: true, contacts: [{ leadId }] });
     expect(createRes.status).toBe(201);
     const campaignId = createRes.body.campaign.id;
 
@@ -126,7 +126,7 @@ describe("campaign/follow-up streaming opt-in e2e (real Postgres + Redis + worke
 
     const createRes = await request(app)
       .post("/api/campaigns")
-      .send({ name: "non-streaming e2e campaign", streamingEnabled: false, contacts: [{ leadId }] });
+      .send({ name: "non-streaming e2e campaign", script: "Ask about renewal", streamingEnabled: false, contacts: [{ leadId }] });
     const campaignId = createRes.body.campaign.id;
 
     await request(app).post(`/api/campaigns/${campaignId}/start`);

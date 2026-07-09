@@ -70,6 +70,7 @@ ${VERBAL_FILLER_GUIDANCE}`;
 interface CampaignPromptSource {
   script?: string | null;
   objectionPlaybook?: string | null;
+  openingLine?: string | null;
 }
 
 /**
@@ -114,6 +115,40 @@ export function buildSystemPrompt(campaign?: CampaignPromptSource | null, direct
   if (campaign?.script) parts.push(`Campaign script/guidance:\n${campaign.script}`);
   if (campaign?.objectionPlaybook) parts.push(`Campaign objection playbook:\n${campaign.objectionPlaybook}`);
   return parts.join("\n\n");
+}
+
+const DEFAULT_INBOUND_GREETING = "Hi, thanks for calling! How can I help you today?";
+// Deliberately generic (no invented company name) - unlike the inbound
+// greeting, this is spoken before the AI model (which does know the
+// campaign's script/company framing) is ever invoked, so it can't safely
+// claim anything specific a campaign hasn't opted into via openingLine.
+// Exported (not just used internally by resolveGreeting below) so the admin
+// panel can show it verbatim next to the campaign form's openingLine field -
+// otherwise "leave blank to use a generic default" tells an author nothing
+// about what their callees would actually hear.
+export const DEFAULT_OUTBOUND_OPENING_LINE = "Hi, thanks for picking up - this is an automated call, do you have a quick moment?";
+
+/**
+ * The line spoken the instant a call connects, before the AI model is ever
+ * invoked (see callStreamSession.ts's "start" frame handler) - so the callee
+ * hears something immediately rather than the model silently waiting for
+ * them to speak first (confirmed live: callees repeating "Hello? Hello?"
+ * into dead air otherwise). Deterministic and campaign-configurable rather
+ * than LLM-generated, so it's instant (no Gemini round-trip before the
+ * callee hears anything) and unaffected by that call's model
+ * availability/rate-limit state.
+ *
+ * Inbound always uses the fixed default - "thanks for calling" only makes
+ * sense when the caller dialed in. Outbound uses the campaign's own
+ * openingLine when set (e.g. "Hi, this is Acquire Right calling about..."),
+ * falling back to a generic default for campaigns that don't set one and
+ * for follow-up calls (which have no campaign to source one from at all).
+ */
+export function resolveGreeting(direction?: CallDirection, campaign?: CampaignPromptSource | null): string {
+  if (direction === CallDirection.OUTBOUND) {
+    return campaign?.openingLine?.trim() || DEFAULT_OUTBOUND_OPENING_LINE;
+  }
+  return DEFAULT_INBOUND_GREETING;
 }
 
 async function persistNewMessages(callId: string, before: number, all: AgentMessage[]) {

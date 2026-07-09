@@ -13,13 +13,24 @@ export interface CampaignContactInput {
 
 export interface CreateCampaignInput {
   name: string;
-  script?: string;
+  // Required: without one, the model has nothing concrete to open with and
+  // falls back to improvising a generic sales pitch - observed live reading
+  // unfilled template placeholders ("this is [Your Name] from [Your
+  // Company]") straight into the call, since it has no real facts to use
+  // instead.
+  script: string;
   /** Product/offer-specific rebuttals for this campaign (e.g. "if price is
    * the objection, mention the 3-installment plan") - appended to the AI's
    * system prompt alongside `script`. Optional: the baseline system prompt
    * already handles objections generically, this only adds campaign-specific
    * factual detail on top. */
   objectionPlaybook?: string;
+  /** Spoken verbatim the instant an outbound call for this campaign connects,
+   * before the AI model is ever invoked (see callStreamSession.ts) - so the
+   * callee hears something immediately instead of the AI silently waiting
+   * for them to speak first. Optional: falls back to a generic default
+   * (resolveGreeting in callConversationService.ts) when unset. */
+  openingLine?: string;
   /** Every dial this campaign makes uses real-time media streaming (barge-in)
    * by default - see outboundDialService.ts's PlaceOutboundCallOptions. Pass
    * `false` to opt this campaign out. Still gated by the global
@@ -41,6 +52,7 @@ export async function createCampaign(input: CreateCampaignInput) {
         name: input.name,
         script: input.script,
         objectionPlaybook: input.objectionPlaybook,
+        openingLine: input.openingLine,
         streamingEnabled: input.streamingEnabled ?? true,
       },
     });
