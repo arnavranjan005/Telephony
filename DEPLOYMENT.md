@@ -228,6 +228,13 @@ Set `TELNYX_PUBLIC_KEY` (portal → API keys → public key) so signatures are
 verified. Confirm `TELNYX_CONNECTION_ID` matches this application and
 `TELNYX_FROM_NUMBER` is one of its numbers.
 
+**Inbound calls are recorded.** The answer command requests dual-channel MP3
+recording (`record-from-answer` — see `answerCall` in
+`packages/domain/src/telnyx/callService.ts`), so make sure call recording is
+permitted on your Telnyx account/plan. When Telnyx finishes a recording it
+delivers a `call.recording.saved` event to the same webhook URL, and the MP3
+URL is stored on `Call.recordingUrl` — no extra configuration needed.
+
 ### 2. Verify `BASE_URL`
 
 `BASE_URL` must equal the API's public HTTPS origin. It is embedded (as
@@ -306,6 +313,13 @@ worker scales horizontally today, with caveat #2 above.
 - Keep `REDIS_TLS_REJECT_UNAUTHORIZED=true`.
 - All secrets arrive via environment variables; nothing is read from files at
   runtime, so use your platform's secret manager.
+- **Call-recording consent is not handled by the app.** Inbound calls are
+  recorded (above), and many jurisdictions require announcing that or
+  obtaining consent (e.g. two-party-consent states). Add a recording
+  disclosure to the greeting/prompt, or strip the `record` parameters from
+  `answerCall`, before taking real traffic. The recordings themselves live on
+  Telnyx-hosted URLs (only the link is stored in Postgres), so Telnyx's
+  storage/retention settings govern them.
 
 ## CI/CD
 
