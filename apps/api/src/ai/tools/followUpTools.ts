@@ -58,6 +58,13 @@ export function buildFollowUpTools(context: FollowUpToolContext): ToolDefinition
 
       const scheduledAt = new Date(args.scheduledAt as string);
 
+      // isWithinCallingHours below only validates time-of-day legality, not
+      // date sanity - a stale/hallucinated past date could otherwise slip
+      // through if its time-of-day happened to land in the legal window.
+      if (scheduledAt.getTime() <= Date.now()) {
+        return { scheduled: false, reason: "Requested time is in the past" };
+      }
+
       if (context.phoneNumber && !isWithinCallingHours(context.phoneNumber, scheduledAt)) {
         return {
           scheduled: false,

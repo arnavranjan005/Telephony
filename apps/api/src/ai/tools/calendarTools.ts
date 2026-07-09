@@ -51,6 +51,13 @@ export function buildCalendarTools(context: CalendarToolContext): ToolDefinition
       const startTime = args.startTime as string;
       const endTime = args.endTime as string;
 
+      // Calendar availability alone doesn't rule out a stale/hallucinated
+      // past date - an empty slot in the past is still "available" by that
+      // check alone, so it needs its own explicit rejection.
+      if (new Date(startTime).getTime() <= Date.now()) {
+        return { booked: false, reason: "Requested time is in the past" };
+      }
+
       const available = await isSlotAvailable(startTime, endTime);
       if (!available) {
         return { booked: false, reason: "Slot is no longer available" };
