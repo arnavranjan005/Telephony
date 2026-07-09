@@ -75,9 +75,53 @@ export function sendSpeech(text: string, sendFrame: (base64Payload: string) => v
 
   const bytesPerFrame = Math.floor(env.MEDIA_STREAM_SAMPLE_RATE * (FRAME_DURATION_MS / 1000)) * BYTES_PER_SAMPLE;
 
+  // Telnyx's playback buffer appears to need a brief warm-up at the start of
+  // each fresh outbound audio burst - confirmed via recorded-call transcripts
+  // where real speech was consistently missing or garbled in exactly that
+  // window on every single utterance, not randomly. A short silent lead-in
+  // sacrifices silence to that warm-up instead of real words. Fetched
+  // concurrently with sending the silence (not awaited first) so it doesn't
+  // add extra latency on top - by the time the lead-in finishes, ElevenLabs'
+  // response has usually already started arriving.
+  const SILENCE_LEAD_IN_FRAMES = 6; // ~120ms at FRAME_DURATION_MS=20
+  const silenceFrame = Buffer.alloc(bytesPerFrame);
+
   (async () => {
     try {
-      const stream = await fetchSpeechStream(text, abortController.signal);
+      const streamPromise = fetchSpeechStream(text, abortController.signal);
+      // Started above but not awaited until after the silence lead-in below,
+      // so if it rejects in the meantime, Node sees a synchronously-unhandled
+      // rejection - which crashes the process by default on Node 15+. The
+      // real error is still fully handled via the `await streamPromise`
+      // further down; this just marks it handled immediately so the gap in
+      // between can't crash anything.
+      streamPromise.catch(() => {});
+
+      // Anchored to a single start time rather than sleeping a flat
+      // FRAME_DURATION_MS after every frame - that naive approach ignores
+      // the processing time each iteration actually takes (buffer slicing,
+      // base64 encoding, the WS send, occasional stalls waiting on the next
+      // network chunk from ElevenLabs), so the feed drifts later than
+      // real-time as it accumulates - inaudible for a short reply, but
+      // Telnyx's playout buffer starves progressively on a longer one. This
+      // targets each frame's absolute send time and only sleeps the
+      // remainder, catching back up automatically after any stall. One
+      // continuous counter spans the silence lead-in and the real content so
+      // there's no seam between them.
+      const startTime = Date.now();
+      let frameIndex = 0;
+
+      for (let i = 0; i < SILENCE_LEAD_IN_FRAMES; i += 1) {
+        if (cancelled) return;
+        sendFrame(encodeAudioPayload(silenceFrame));
+        frameIndex += 1;
+        const leadInDelay = startTime + frameIndex * FRAME_DURATION_MS - Date.now();
+        if (leadInDelay > 0) {
+          await new Promise((resolve) => setTimeout(resolve, leadInDelay));
+        }
+      }
+
+      const stream = await streamPromise;
       if (cancelled) return;
 
       const reader = stream.getReader();
@@ -94,7 +138,11 @@ export function sendSpeech(text: string, sendFrame: (base64Payload: string) => v
           if (cancelled) return;
           sendFrame(encodeAudioPayload(pending.subarray(0, bytesPerFrame)));
           pending = pending.subarray(bytesPerFrame);
-          await new Promise((resolve) => setTimeout(resolve, FRAME_DURATION_MS));
+          frameIndex += 1;
+          const delay = startTime + frameIndex * FRAME_DURATION_MS - Date.now();
+          if (delay > 0) {
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          }
         }
       }
 

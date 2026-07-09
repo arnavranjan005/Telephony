@@ -39,6 +39,12 @@ export class DeepgramStreamClient extends EventEmitter {
       utterance_end_ms: 1000,
     });
 
+    // `client.listen.v1.connect()` only constructs the socket wrapper - it
+    // doesn't start the connection or wait for it to open. Without these two
+    // calls, sendMedia() throws "Socket is not open" for the whole call.
+    this.socket.connect();
+    await this.socket.waitForOpen();
+
     this.socket.on("message", (message) => {
       if (message.type === "Results") {
         const alternative = message.channel?.alternatives?.[0];
@@ -57,7 +63,12 @@ export class DeepgramStreamClient extends EventEmitter {
   }
 
   sendAudio(chunk: Buffer): void {
-    this.socket?.sendMedia(chunk);
+    // A frame can still race the handshake (this.socket is assigned before
+    // waitForOpen() resolves - see mediaStreamServer.ts's comment on the same
+    // race for handleTelnyxFrame/session.start()). Drop it rather than throw;
+    // losing a few ms of audio at turn start is fine, crashing the call isn't.
+    if (!this.socket || this.socket.readyState !== 1 /* OPEN */) return;
+    this.socket.sendMedia(chunk);
   }
 
   close(): void {
