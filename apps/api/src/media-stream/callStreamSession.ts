@@ -193,8 +193,6 @@ export class CallStreamSession {
       // you" has no idea whether to keep talking or hang up; this at least
       // tells them something's wrong rather than leaving dead air.
       if (this.state === "THINKING" && this.turnVersion === version) {
-        this.state = "LISTENING";
-
         // end_call (and whatever it was bundled with, e.g. add_to_dnc) may
         // have already run successfully earlier in this same turn, with only
         // the trailing goodbye-text generation failing here - that intent is
@@ -212,6 +210,13 @@ export class CallStreamSession {
         // failed because the DB is down finds the DB still down on this
         // lookup; a caller who already hung up on the silence makes
         // hangupCall itself throw.
+        //
+        // State deliberately stays THINKING while the lookup is in flight:
+        // handleTranscript only registers a barge-in (bumping turnVersion)
+        // in THINKING/SPEAKING, so flipping to LISTENING first would leave
+        // a caller who starts talking mid-lookup undetected - the version
+        // re-check below would never fire, and a stale endCallRequested
+        // would hang up over their new utterance.
         let endCallRequested = false;
         try {
           const call = await prisma.call.findUnique({
@@ -224,21 +229,25 @@ export class CallStreamSession {
           console.error(`end_call lookup failed for call ${this.options.callId}:`, lookupError);
         }
 
+        // Barged in during the lookup: the caller re-engaged, so this turn
+        // is no longer ours - don't hang up over them (the next turn's own
+        // reset clears the stale endCallRequested flag) and don't speak the
+        // trouble line over their utterance. bargeIn() already restored
+        // LISTENING.
+        if (this.turnVersion !== version) return;
+
         if (endCallRequested) {
-          // A barge-in while the lookup was in flight means the caller wants
-          // to keep talking - same rule as runTurn's own post-goodbye hangup
-          // check; the next turn clears the stale endCallRequested flag.
-          if (this.turnVersion === version) {
-            try {
-              await hangupCall(this.options.callControlId);
-            } catch (hangupError) {
-              // eslint-disable-next-line no-console
-              console.error(`Hangup failed for call ${this.options.callId}:`, hangupError);
-            }
+          this.state = "LISTENING";
+          try {
+            await hangupCall(this.options.callControlId);
+          } catch (hangupError) {
+            // eslint-disable-next-line no-console
+            console.error(`Hangup failed for call ${this.options.callId}:`, hangupError);
           }
           return;
         }
 
+        this.state = "LISTENING";
         const fallbackReply = "Sorry, I'm having trouble on my end - could you give me just a moment?";
         try {
           await this.speak(fallbackReply);

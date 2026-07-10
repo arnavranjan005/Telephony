@@ -285,6 +285,27 @@ describe("CallStreamSession", () => {
     expect(sendSpeech).not.toHaveBeenCalled();
   });
 
+  it("does not hang up over a caller who starts talking while the end_call lookup is in flight", async () => {
+    runStreamingConversationTurn.mockRejectedValue(new Error("boom"));
+    callFindUnique.mockImplementation(async (args: { select?: { endCallRequested?: boolean } }) => {
+      if (args?.select?.endCallRequested) {
+        // Caller re-engages exactly while the recovery path is querying the
+        // stale endCallRequested flag - state must still be THINKING here so
+        // this registers as a barge-in (bumping turnVersion) instead of
+        // going unnoticed.
+        transcriptHandler({ transcript: "oh wait, one more thing", isFinal: false, speechFinal: false });
+        return { endCallRequested: true };
+      }
+      return { id: "call_1", direction: "INBOUND", fromNumber: "+12125551234", leadId: "lead_1" };
+    });
+
+    transcriptHandler({ transcript: "bye", isFinal: true, speechFinal: true });
+    await flushMicrotasks();
+
+    expect(hangupCall).not.toHaveBeenCalled();
+    expect(sendSpeech).not.toHaveBeenCalled(); // no trouble line over the caller either
+  });
+
   it("does not let a failing end_call lookup escape (fire-and-forget context) - falls back to the trouble line instead", async () => {
     runStreamingConversationTurn.mockRejectedValue(new Error("boom"));
     // The turn failed because the DB is down - so the endCallRequested
