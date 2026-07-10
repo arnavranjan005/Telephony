@@ -188,7 +188,7 @@ export default function CallsPage() {
                               {message.toolName && <span>· {message.toolName}</span>}
                               {message.interrupted && <span>· interrupted</span>}
                             </div>
-                            <p className="whitespace-pre-wrap">{message.content}</p>
+                            <p className="whitespace-pre-wrap break-words">{message.content}</p>
                           </div>
                         ))}
                     </div>

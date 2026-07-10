@@ -20,12 +20,15 @@ export function buildCallControlTools(context: CallControlToolContext): ToolDefi
     name: "end_call",
     description:
       "End the phone call. Call this once the conversation has genuinely concluded - the caller has said " +
-      "goodbye, confirms they have nothing else to discuss, or asks to end the call, or you've finished " +
-      "wrapping up (e.g. right after booking an appointment and confirming the details, or after processing " +
-      "an opt-out request). Say your brief, natural goodbye as your reply once you see this tool's result, " +
-      "not in the same turn as the call itself - that reply is what actually gets spoken before the call " +
-      "ends. Don't call this while the caller is mid-thought, still asking questions, or the conversation is " +
-      "otherwise still active.",
+      "goodbye, explicitly confirms they have nothing else to discuss, asks to end the call, or after " +
+      "processing an opt-out request. Having just booked an appointment or callback is NOT by itself a " +
+      "reason to call this - ask the caller if there's anything else they need first (the way a real human " +
+      "agent would), and only call this once they've actually confirmed there isn't; a bare \"yes\"/\"okay\" " +
+      "right after restating a booking is normally just confirming the details, not agreeing to end the " +
+      "call. Say your brief, natural goodbye as your reply once you see this tool's result, not in the same " +
+      "turn as the call itself - that reply is what actually gets spoken before the call ends. Don't call " +
+      "this while the caller is mid-thought, still asking questions, or the conversation is otherwise still " +
+      "active.",
     parameters: { type: "object", properties: {} },
     handler: async () => {
       await prisma.call.update({ where: { id: context.callId }, data: { endCallRequested: true } });

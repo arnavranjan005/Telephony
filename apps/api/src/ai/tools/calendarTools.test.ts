@@ -138,4 +138,56 @@ describe("calendarTools", () => {
 
     expect(result).toEqual({ canceled: false, reason: "That appointment is already completed and can't be canceled" });
   });
+
+  it("schedule_appointment rejects a malformed attendeeEmail before touching the calendar or DB", async () => {
+    isSlotAvailable.mockResolvedValue(true);
+
+    const result = await scheduleAppointment.handler({
+      title: "Sales call",
+      startTime: "2025-01-15T14:00:00Z",
+      endTime: "2025-01-15T14:30:00Z",
+      attendeeEmail: "not an email",
+    });
+
+    expect(result).toEqual({
+      booked: false,
+      reason: "attendeeEmail doesn't look like a valid email address - confirm the spelling with the caller and try again",
+    });
+    expect(isSlotAvailable).not.toHaveBeenCalled();
+    expect(createAppointment).not.toHaveBeenCalled();
+    expect(appointmentCreate).not.toHaveBeenCalled();
+  });
+
+  it("schedule_appointment trims incidental whitespace from an otherwise-valid attendeeEmail", async () => {
+    isSlotAvailable.mockResolvedValue(true);
+    createAppointment.mockResolvedValue({ eventId: "evt_trim", htmlLink: null, start: "", end: "" });
+    appointmentCreate.mockResolvedValue({ id: "appt_trim" });
+
+    const result = await scheduleAppointment.handler({
+      title: "Sales call",
+      startTime: "2025-01-15T14:00:00Z",
+      endTime: "2025-01-15T14:30:00Z",
+      attendeeEmail: " lead@example.com ",
+    });
+
+    expect(result).toEqual({ booked: true, appointmentId: "appt_trim", calendarEventId: "evt_trim" });
+    expect(createAppointment).toHaveBeenCalledWith(
+      expect.objectContaining({ attendeeEmail: "lead@example.com" })
+    );
+  });
+
+  it("schedule_appointment books with no attendeeEmail when the model doesn't supply one - never silently substitutes an unconfirmed address", async () => {
+    isSlotAvailable.mockResolvedValue(true);
+    createAppointment.mockResolvedValue({ eventId: "evt_none", htmlLink: null, start: "", end: "" });
+    appointmentCreate.mockResolvedValue({ id: "appt_none" });
+
+    const result = await scheduleAppointment.handler({
+      title: "Sales call",
+      startTime: "2025-01-15T14:00:00Z",
+      endTime: "2025-01-15T14:30:00Z",
+    });
+
+    expect(result).toEqual({ booked: true, appointmentId: "appt_none", calendarEventId: "evt_none" });
+    expect(createAppointment).toHaveBeenCalledWith(expect.objectContaining({ attendeeEmail: undefined }));
+  });
 });

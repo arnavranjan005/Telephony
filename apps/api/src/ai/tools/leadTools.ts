@@ -38,5 +38,25 @@ export function buildLeadTools(context: LeadToolContext): ToolDefinition[] {
     },
   };
 
-  return [updateLead];
+  const getLeadEmail: ToolDefinition = {
+    name: "get_lead_email",
+    description:
+      "Check whether this lead already has an email address on file (e.g. from signup or an earlier call), before asking " +
+      "the caller for one or relying on the conversation transcript. Call this first, before schedule_appointment, whenever " +
+      "you don't already have a confirmed email for this booking. If it returns hasEmail: true, read the email back to the " +
+      "caller and ask them to confirm it's still correct or give a different one - never assume it's still accurate without " +
+      "asking. If it returns hasEmail: false, fall back to checking what the caller has already told you in this " +
+      "conversation, or ask them directly.",
+    parameters: { type: "object", properties: {} },
+    handler: async () => {
+      if (!context.leadId) {
+        return { hasEmail: false, reason: "No lead associated with this call" };
+      }
+
+      const lead = await prisma.lead.findUnique({ where: { id: context.leadId }, select: { email: true } });
+      return lead?.email ? { hasEmail: true, email: lead.email } : { hasEmail: false };
+    },
+  };
+
+  return [updateLead, getLeadEmail];
 }
