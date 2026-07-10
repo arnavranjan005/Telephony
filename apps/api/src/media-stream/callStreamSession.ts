@@ -18,13 +18,6 @@ import { decodeAudioPayload, decodeInboundFrame, encodeClearFrame, encodeMediaFr
 
 type SessionState = "IDLE" | "LISTENING" | "THINKING" | "SPEAKING";
 
-// Spoken before hanging up when end_call already succeeded but the model's
-// own goodbye line failed to generate - deterministic (no LLM round-trip,
-// same rationale as the opening line in callConversationService.ts), so the
-// caller gets closure instead of an unexplained click, regardless of why the
-// turn failed.
-const FALLBACK_GOODBYE_LINE = "Alright, thanks for your time - goodbye!";
-
 export interface CallStreamSessionOptions {
   callId: string;
   callControlId: string;
@@ -206,14 +199,15 @@ export class CallStreamSession {
         // have already run successfully earlier in this same turn, with only
         // the trailing goodbye-text generation failing here - that intent is
         // durably recorded in the DB and shouldn't be lost just because the
-        // final reply couldn't be produced. Honor it with a canned goodbye
-        // and the hangup, instead of making the caller sit through a "having
-        // trouble" line before a goodbye that was never coming either way.
+        // final reply couldn't be produced. Honor it immediately (a silent
+        // hangup - only ever speak a goodbye the model actually generated)
+        // instead of making the caller sit through a "having trouble" line
+        // before a goodbye that was never coming either way.
         //
-        // Every step below is individually guarded: this catch block runs in
-        // a fire-and-forget context (see the docstring above), so anything
-        // that escapes it is an unhandled rejection that kills the whole
-        // process - and these failures are *correlated* with the turn
+        // Both steps below are individually guarded: this catch block runs
+        // in a fire-and-forget context (see the docstring above), so
+        // anything that escapes it is an unhandled rejection that kills the
+        // whole process - and these failures are *correlated* with the turn
         // failure that got us here, not independent long shots. A turn that
         // failed because the DB is down finds the DB still down on this
         // lookup; a caller who already hung up on the silence makes
@@ -231,16 +225,7 @@ export class CallStreamSession {
         }
 
         if (endCallRequested) {
-          try {
-            await this.speak(FALLBACK_GOODBYE_LINE);
-            if (this.turnVersion === version) {
-              await this.persistMessage({ role: "assistant", content: FALLBACK_GOODBYE_LINE }, false);
-            }
-          } catch (goodbyeError) {
-            // eslint-disable-next-line no-console
-            console.error(`Fallback goodbye failed for call ${this.options.callId}:`, goodbyeError);
-          }
-          // A barge-in while the goodbye was playing means the caller wants
+          // A barge-in while the lookup was in flight means the caller wants
           // to keep talking - same rule as runTurn's own post-goodbye hangup
           // check; the next turn clears the stale endCallRequested flag.
           if (this.turnVersion === version) {

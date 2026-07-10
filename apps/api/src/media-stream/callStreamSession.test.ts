@@ -272,34 +272,17 @@ describe("CallStreamSession", () => {
     expect(hangupCall).not.toHaveBeenCalled();
   });
 
-  it("speaks a canned goodbye (not the 'having trouble' line) and hangs up, when end_call was already requested before the turn failed", async () => {
+  it("hangs up immediately without speaking anything hardcoded, when end_call was already requested before the turn failed", async () => {
     runStreamingConversationTurn.mockRejectedValue(new Error("boom"));
     callFindUnique.mockResolvedValue({ endCallRequested: true });
 
     transcriptHandler({ transcript: "bye", isFinal: true, speechFinal: true });
     await flushMicrotasks();
 
-    expect(sendSpeech).toHaveBeenCalledTimes(1);
-    expect(sendSpeech).toHaveBeenCalledWith("Alright, thanks for your time - goodbye!", expect.any(Function));
-    // Persisted like any other reply, so the transcript matches what the
-    // caller actually heard.
-    expect(conversationMessageCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ role: "ASSISTANT", content: "Alright, thanks for your time - goodbye!" }),
-      })
-    );
     expect(hangupCall).toHaveBeenCalledWith("ctrl_1");
-  });
-
-  it("still hangs up when end_call was requested but the goodbye TTS itself fails", async () => {
-    runStreamingConversationTurn.mockRejectedValue(new Error("boom"));
-    callFindUnique.mockResolvedValue({ endCallRequested: true });
-    sendSpeech.mockImplementation(() => ({ cancel: jest.fn(), done: Promise.reject(new Error("tts down")) }));
-
-    transcriptHandler({ transcript: "bye", isFinal: true, speechFinal: true });
-    await flushMicrotasks();
-
-    expect(hangupCall).toHaveBeenCalledWith("ctrl_1");
+    // Only a goodbye the model actually generated is ever spoken - the turn
+    // failed to produce one, so the hangup is silent.
+    expect(sendSpeech).not.toHaveBeenCalled();
   });
 
   it("does not let a failing end_call lookup escape (fire-and-forget context) - falls back to the trouble line instead", async () => {
