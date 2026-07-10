@@ -73,7 +73,7 @@ export function LiveCallTranscript({ callId, onHangup }: { callId: string; onHan
               <span className="font-medium">{turn.role}</span>
               {turn.toolName && <span> · {turn.toolName}</span>}
             </div>
-            <p className="whitespace-pre-wrap">{turn.content}</p>
+            <p className="whitespace-pre-wrap break-words">{turn.content}</p>
           </div>
         ))}
         {callerSpeaking && (
