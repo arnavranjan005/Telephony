@@ -9,6 +9,16 @@ export interface CalendarToolContext {
   callId?: string;
 }
 
+// Only validates the *shape* of a single already-normalized string the model
+// hands us - not for scanning free-form transcript text. Extracting an email
+// out of noisy ASR speech (a caller spelling one out loud - "john dot doe at
+// gmail dot com") is exactly what an LLM is good at and a regex isn't, so
+// that job is left to the model (see SYSTEM_PROMPT in
+// callConversationService.ts, which already has the full transcript in every
+// turn's message history). This regex only catches the narrower failure mode
+// of a malformed value slipping through to Google's API.
+const EMAIL_SHAPE_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 /**
  * Builds the calendar-related tool definitions the AI agent can call during a
  * conversation. Bound to a specific call/lead so bookings made mid-call are
@@ -17,7 +27,11 @@ export interface CalendarToolContext {
 export function buildCalendarTools(context: CalendarToolContext): ToolDefinition[] {
   const checkAvailability: ToolDefinition = {
     name: "check_appointment_availability",
-    description: "Check whether a proposed appointment time slot is free on the calendar before booking it.",
+    description:
+      "Check whether a proposed appointment time slot is free on the calendar before booking it. There is no " +
+      "minimum lead time - a slot 10 minutes or even 1 minute from now is checkable and bookable like any other, " +
+      "as long as it's in the future and free. Don't assume or tell the caller a booking needs more advance " +
+      "notice than that; check first rather than refusing based on how soon it is.",
     parameters: {
       type: "object",
       properties: {
@@ -36,7 +50,10 @@ export function buildCalendarTools(context: CalendarToolContext): ToolDefinition
     name: "schedule_appointment",
     description:
       "Book an appointment on the calendar for the current lead/caller. Only call this after confirming availability and getting the caller's verbal confirmation. " +
-      "If the caller already has an appointment booked and wants a different time instead, call cancel_appointment first.",
+      "If the caller already has an appointment booked and wants a different time instead, call cancel_appointment first. " +
+      "There is no minimum lead time - the only timing requirement is that startTime is in the future and the slot is " +
+      "free, so a request for a few minutes from now is valid; check it with check_appointment_availability and book " +
+      "it rather than refusing or telling the caller it needs more advance notice.",
     parameters: {
       type: "object",
       properties: {
@@ -50,12 +67,24 @@ export function buildCalendarTools(context: CalendarToolContext): ToolDefinition
     handler: async (args) => {
       const startTime = args.startTime as string;
       const endTime = args.endTime as string;
+      const attendeeEmail = args.attendeeEmail as string | undefined;
 
       // Calendar availability alone doesn't rule out a stale/hallucinated
       // past date - an empty slot in the past is still "available" by that
       // check alone, so it needs its own explicit rejection.
       if (new Date(startTime).getTime() <= Date.now()) {
         return { booked: false, reason: "Requested time is in the past" };
+      }
+
+      // A shape check on the model's own (already-normalized) output, not an
+      // attempt to parse one out of raw transcript text - see the comment on
+      // EMAIL_SHAPE_REGEX above. Catches a garbled value before it reaches
+      // Google's API instead of silently sending it or erroring obscurely.
+      if (attendeeEmail && !EMAIL_SHAPE_REGEX.test(attendeeEmail)) {
+        return {
+          booked: false,
+          reason: "attendeeEmail doesn't look like a valid email address - confirm the spelling with the caller and try again",
+        };
       }
 
       const available = await isSlotAvailable(startTime, endTime);
@@ -67,7 +96,7 @@ export function buildCalendarTools(context: CalendarToolContext): ToolDefinition
         summary: args.title as string,
         startTime,
         endTime,
-        attendeeEmail: args.attendeeEmail as string | undefined,
+        attendeeEmail,
       });
 
       const appointment = await prisma.appointment.create({

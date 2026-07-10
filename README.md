@@ -275,6 +275,20 @@ cancel on an already-canceled row is a no-op success, and canceling something al
 transient Google error can't leave an appointment marked canceled locally while still live on the
 real calendar.
 
+**Getting an email before booking**: `SYSTEM_PROMPT` (`callConversationService.ts`) resolves an email in a
+fixed order before calling `schedule_appointment`: (1) `get_lead_email` (`apps/api/src/ai/tools/leadTools.ts`)
+checks `Lead.email` for one already on file (e.g. from signup or an earlier call) - the cheapest and most
+reliable source, since it's a real DB value, not something to parse out of speech; (2) if none is on file,
+the model checks back through what the caller has already said in this conversation itself, rather than a
+dedicated tool - extracting an email a caller *spoke out loud* ("john dot doe at gmail dot com") out of raw
+ASR transcript text isn't reliably regexable (there's no punctuation to match against until something has
+already normalized it), so that interpretation is left to the model, which reads its interpretation back
+for confirmation rather than assuming it heard correctly; (3) if still nothing, it asks the caller directly,
+but books anyway without an `attendeeEmail` if they decline - a missing email never blocks the booking.
+Whichever source it came from, `schedule_appointment` itself does a narrow shape check
+(`EMAIL_SHAPE_REGEX` in `calendarTools.ts`) on the final value before it reaches Google's API - a reliable
+use of regex because it validates one already-normalized candidate string, not free-form speech.
+
 ### Telnyx SDK gotcha: `calls.create` mutates the shared client
 
 `packages/domain/src/telnyx/telnyxClient.ts` exports a module-level `telnyxClient` singleton used

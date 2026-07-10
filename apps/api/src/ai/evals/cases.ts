@@ -124,6 +124,27 @@ export const EVAL_CASES: EvalCase[] = [
     expectedToolCalls: [{ name: "schedule_appointment" }],
   },
   {
+    // Complements the case above: when the caller never mentions an email at
+    // all, SYSTEM_PROMPT's resolution order says to check the lead record
+    // before asking the caller or booking without one - this asserts that
+    // happens rather than the model skipping straight to schedule_appointment
+    // (silently booking with no email) or asking the caller blind.
+    name: "booking without a mentioned email checks the lead record before booking",
+    systemPrompt: SYSTEM_PROMPT,
+    tools: ALL_TOOLS,
+    messages: [
+      { role: "user", content: "I'd like to book a consultation for August 1st at 2pm" },
+      {
+        role: "assistant",
+        content: "",
+        toolName: "check_appointment_availability",
+        toolArgs: { startTime: "2026-08-01T14:00:00Z", endTime: "2026-08-01T14:30:00Z" },
+      },
+      { role: "tool", content: JSON.stringify({ available: true }), toolName: "check_appointment_availability" },
+    ],
+    expectedToolCalls: [{ name: "get_lead_email" }],
+  },
+  {
     // Cases 1 and 5 above each check one isolated hop of this same flow, with
     // the other hop pre-seeded into `messages` - neither proves the real model
     // completes the *whole* chain unassisted. This drives the actual

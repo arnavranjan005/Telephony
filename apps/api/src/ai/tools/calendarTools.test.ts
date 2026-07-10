@@ -138,4 +138,23 @@ describe("calendarTools", () => {
 
     expect(result).toEqual({ canceled: false, reason: "That appointment is already completed and can't be canceled" });
   });
+
+  it("schedule_appointment rejects a malformed attendeeEmail before touching the calendar or DB", async () => {
+    isSlotAvailable.mockResolvedValue(true);
+
+    const result = await scheduleAppointment.handler({
+      title: "Sales call",
+      startTime: "2025-01-15T14:00:00Z",
+      endTime: "2025-01-15T14:30:00Z",
+      attendeeEmail: "not an email",
+    });
+
+    expect(result).toEqual({
+      booked: false,
+      reason: "attendeeEmail doesn't look like a valid email address - confirm the spelling with the caller and try again",
+    });
+    expect(isSlotAvailable).not.toHaveBeenCalled();
+    expect(createAppointment).not.toHaveBeenCalled();
+    expect(appointmentCreate).not.toHaveBeenCalled();
+  });
 });
