@@ -200,8 +200,11 @@ on them.
   Note `DIAL_RATE_LIMIT_MAX` is enforced **per worker instance**, so total
   Telnyx throughput ≈ instances × limit — lower the per-instance limit if you
   scale out.
-- **Caveat for streaming automated dials:** see topology constraint #2 below
-  before scaling the worker with `MEDIA_STREAM_ENABLED=true`.
+- Streaming automated dials work fine in a split deployment: the media-stream
+  auth token the worker issues at dial time is stored in Redis
+  (`packages/domain/src/mediaStream/streamAuth.ts`), so the API can verify it
+  when Telnyx's WebSocket arrives — which also means the worker needs Redis
+  reachable at dial time for more than just the queue.
 
 ## Deploying `apps/web`
 
@@ -228,12 +231,14 @@ Set `TELNYX_PUBLIC_KEY` (portal → API keys → public key) so signatures are
 verified. Confirm `TELNYX_CONNECTION_ID` matches this application and
 `TELNYX_FROM_NUMBER` is one of its numbers.
 
-**Inbound calls are recorded.** The answer command requests dual-channel MP3
-recording (`record-from-answer` — see `answerCall` in
-`packages/domain/src/telnyx/callService.ts`), so make sure call recording is
-permitted on your Telnyx account/plan. When Telnyx finishes a recording it
-delivers a `call.recording.saved` event to the same webhook URL, and the MP3
-URL is stored on `Call.recordingUrl` — no extra configuration needed.
+**All answered calls are recorded, both directions.** Inbound calls request
+dual-channel MP3 recording in the answer command (`record-from-answer`);
+outbound calls start recording explicitly once the far end picks up
+(`startRecording` — both in `packages/domain/src/telnyx/callService.ts`). Make
+sure call recording is permitted on your Telnyx account/plan. When Telnyx
+finishes a recording it delivers a `call.recording.saved` event to the same
+webhook URL, and the MP3 URL is stored on `Call.recordingUrl` — no extra
+configuration needed.
 
 ### 2. Verify `BASE_URL`
 
@@ -269,33 +274,28 @@ passes through your proxy).
 ## Topology constraints
 
 Postgres is the source of truth throughout, and the write paths (idempotency
-keys, dial claims, campaign transactions) are safe under concurrency. But
-three pieces of API state are **in-process memory**, which constrains the
-topology today:
+keys, dial claims, campaign transactions) are safe under concurrency.
+Media-stream auth tokens are **Redis-backed**
+(`packages/domain/src/mediaStream/streamAuth.ts`: single-use via atomic
+`GETDEL`, 5-minute TTL), so token issuance and verification work across
+process and instance boundaries — the worker can place streaming dials that
+any API instance can authenticate. What still constrains the topology:
 
 1. **SSE event bus** (`apps/api/src/sse/eventBus.ts`) is a per-process
    `EventEmitter`. With multiple API instances, a dashboard connected to
    instance A never sees events for a webhook handled by instance B.
-2. **Media-stream auth tokens** (`packages/domain/src/mediaStream/streamAuth.ts`)
-   are an in-process map: issued by whichever process places/answers the call,
-   verified by the API process Telnyx's WebSocket lands on (single-use,
-   5-minute TTL). Two consequences:
-   - Multiple API instances need the WebSocket to land on the same instance
-     that issued the token — not guaranteed by round-robin routing.
-   - **Campaign/follow-up dials are placed by the worker process**, so their
-     tokens live in the worker's memory and the API can't verify them. Until
-     the token store moves to Redis, streaming automated dials only work when
-     worker and API share a process (as the e2e suite does). In a standard
-     split deployment, create campaigns/follow-ups with
-     `{ "streamingEnabled": false }` so automated dials use the legacy webhook
-     flow; manual (`POST /api/calls/outbound`) and inbound calls stream fine.
-3. **Per-call streaming sessions** hold live WebSocket + Deepgram + ElevenLabs
+2. **Per-call streaming sessions** hold live WebSocket + Deepgram + ElevenLabs
    connections on one instance (unavoidable and fine — but it means draining
    an instance kills its active calls).
+3. **Redis is a call-time dependency for streaming**, not just the queue
+   backend: the dialing process writes the stream token and the API's
+   WebSocket upgrade reads it. A Redis outage doesn't just pause queued dials
+   — new streaming calls fail to authenticate their media WebSocket.
 
-**Bottom line:** run exactly **one API instance** (scaled vertically) unless
-you add a Redis-backed token store and event bus plus sticky routing. The
-worker scales horizontally today, with caveat #2 above.
+**Bottom line:** run **one API instance** (scaled vertically) until the SSE
+event bus is Redis-backed (pub/sub) — token auth no longer forces this, but
+live dashboards do. The worker scales horizontally freely, streaming
+included.
 
 ## Security notes
 
@@ -313,13 +313,14 @@ worker scales horizontally today, with caveat #2 above.
 - Keep `REDIS_TLS_REJECT_UNAUTHORIZED=true`.
 - All secrets arrive via environment variables; nothing is read from files at
   runtime, so use your platform's secret manager.
-- **Call-recording consent is not handled by the app.** Inbound calls are
-  recorded (above), and many jurisdictions require announcing that or
-  obtaining consent (e.g. two-party-consent states). Add a recording
-  disclosure to the greeting/prompt, or strip the `record` parameters from
-  `answerCall`, before taking real traffic. The recordings themselves live on
-  Telnyx-hosted URLs (only the link is stored in Postgres), so Telnyx's
-  storage/retention settings govern them.
+- **Call-recording consent is not handled by the app.** Every answered call —
+  inbound and outbound — is recorded (above), and many jurisdictions require
+  announcing that or obtaining consent (e.g. two-party-consent states). Add a
+  recording disclosure to the greeting/prompt, or strip the recording calls
+  (`answerCall`'s `record` parameters and the `startRecording` call in
+  `callController.ts`), before taking real traffic. The recordings themselves
+  live on Telnyx-hosted URLs (only the link is stored in Postgres), so
+  Telnyx's storage/retention settings govern them.
 
 ## CI/CD
 
@@ -341,7 +342,9 @@ changing prompts or tools.
 ## Operational notes
 
 - **Redis lost/flushed:** restart (or start another) worker;
-  `reconcilePendingWork()` rebuilds the queue from Postgres.
+  `reconcilePendingWork()` rebuilds the queue from Postgres. Stream tokens
+  are ephemeral (5-minute TTL) anyway — a flush only breaks streaming calls
+  that were connecting at that exact moment.
 - **Stuck `CALLING` rows:** a worker that crashed mid-dial leaves the row
   claimed; there is no automatic requeue for `CALLING`. Inspect and reset such
   rows manually (`npx nx run database:prisma-studio` locally, or SQL).
