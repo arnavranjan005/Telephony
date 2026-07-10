@@ -92,10 +92,21 @@ results back, repeat until the agent returns a final spoken reply.
    - `TELNYX_API_KEY`, `TELNYX_CONNECTION_ID`, `TELNYX_FROM_NUMBER` — from the Telnyx portal
    - `TELNYX_PUBLIC_KEY` — for webhook signature verification (optional but recommended)
    - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` — OAuth client for Calendar
-   - `GOOGLE_AI_API_KEY` — Gemini API key (https://aistudio.google.com/apikey)
-   - `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` — required because real-time media
-     streaming (barge-in) is the default calling path (`MEDIA_STREAM_ENABLED=true` by default); set
-     `MEDIA_STREAM_ENABLED=false` instead if you'd rather run the legacy webhook-based flow and skip these
+   - `GOOGLE_AI_API_KEY` — Gemini API key (https://aistudio.google.com/apikey). `GOOGLE_AI_MODEL`
+     defaults to `gemini-3.1-flash-lite` (`packages/config/src/env.ts`) — picked for its free-tier
+     RPM/RPD headroom relative to other Gemini models at the time this was set; free-tier limits
+     shift over time and vary per project, so check https://aistudio.google.com/rate-limit for your
+     own project before assuming any specific numbers, and switch models there if you outgrow it.
+   - `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY` — required because real-time media streaming (barge-in)
+     is the default calling path (`MEDIA_STREAM_ENABLED=true` by default); set
+     `MEDIA_STREAM_ENABLED=false` instead if you'd rather run the legacy webhook-based flow and skip these.
+     `ELEVENLABS_VOICE_ID` defaults to Sarah (`EXAVITQu4vr4xnSDxMaL`), a classic "Default"/premade
+     ElevenLabs voice — **only Default voices work over the API on a free-tier ElevenLabs account.**
+     The much larger Voice Library (searchable, descriptively-named voices like "Elise – Warm, Natural
+     and Engaging") can be freely previewed in the ElevenLabs dashboard but returns
+     `402 paid_plan_required` the moment you call the API with one on a free account — confirmed by
+     direct testing, not just documentation. If you swap voices, verify the new id actually returns
+     audio from `POST https://api.elevenlabs.io/v1/text-to-speech/<id>` before wiring it in.
 3. `npx nx run database:prisma-generate`
 4. `npx nx run database:prisma-migrate` — creates the schema on your Neon database
 5. `npm run dev:api` — starts the API with hot reload on `PORT` (default 3000)
@@ -107,6 +118,15 @@ results back, repeat until the agent returns a final spoken reply.
 1. With the API running, `GET /api/calendar/oauth/url` to get a consent URL; open it and authorize.
 2. Google redirects to `GOOGLE_REDIRECT_URI` (`/api/calendar/oauth/callback`), which returns a
    `refresh_token`. Save that as `GOOGLE_REFRESH_TOKEN` in `.env` and restart the API.
+
+**OAuth consent screen in "Testing" mode** (the default for a new Google Cloud project, and the
+common case for local dev/demos): only test users you explicitly add in the Cloud Console can
+complete the consent flow (capped at 100), and the resulting refresh token can expire after ~7 days
+of inactivity — if calendar bookings start failing after a week of not using the app, this is almost
+always why. Add the account you authorized with as a test user (APIs & Services → OAuth consent
+screen → Test users) to fix the initial `Error 403: access_denied`, and redo the consent flow to get
+a fresh token if one expires. Publishing the app / completing Google's verification removes both
+limits, but isn't necessary for a single business's own calendar.
 
 ### Connecting Telnyx webhooks
 
@@ -252,6 +272,18 @@ goodbye line means the caller wants to keep talking, so the call stays open). Th
 instructs the agent to call `end_call` first and only speak its goodbye once it sees the tool
 result - the same call-then-confirm pattern as `schedule_appointment`/`schedule_followup`.
 
+Having just booked an appointment or callback is **not by itself** grounds to call `end_call` - both
+`SYSTEM_PROMPT` and the tool's own description explicitly say so. The agent asks "is there anything
+else?" after restating a booking and only ends the call once the caller actually confirms there
+isn't, rather than treating a bare "yes"/"okay" right after that restatement as consent to hang up
+(that reply is normally just confirming the booking details are correct, not agreeing to end the
+call) - this was a real observed regression (a live call ended immediately after such a "yes",
+mid-conversation) before the prompt/tool description were tightened to require an explicit
+conclusion signal. There is no code-level guard enforcing this - it's prompt-driven behavior only,
+covered by two dedicated `apps/api/src/ai/evals/cases.ts` cases (see "AI reply-quality evals" below)
+rather than a deterministic check, so a regression here would only surface as an eval failure (or a
+bad call), not a unit test failure.
+
 `schedule_followup` validates the caller's requested time against the calling-hours window (see
 below) *before* writing anything: a request outside 8am-9pm local to the caller's number schedules
 nothing and returns a suggested in-window time instead, so the agent can negotiate a real time with
@@ -292,6 +324,15 @@ already-normalized candidate string, not free-form speech. There's deliberately 
 `Lead.email` when `attendeeEmail` is omitted - a lead having *some* email on file isn't the same as the
 caller having confirmed it for *this* booking, so an omitted `attendeeEmail` always books without one
 rather than silently substituting an address the caller never confirmed on this call.
+
+**No minimum lead time**: `check_appointment_availability` and `schedule_appointment`'s own tool
+descriptions explicitly state there is no minimum notice period - a slot 1 minute from now is exactly
+as valid as one a week out, as long as it's in the future and free. This is stated deliberately because
+the model was previously observed inventing a "the system needs more advance notice" refusal for
+near-term requests with no such restriction anywhere in code (only "not in the past" is actually
+checked) - i.e. hallucinating a business rule that doesn't exist, rather than just calling
+`check_appointment_availability` to find out. Covered by an eval case (see below); there is no
+code-level restriction to test here since none is supposed to exist.
 
 ### Telnyx SDK gotcha: `calls.create` mutates the shared client
 
@@ -587,6 +628,19 @@ npx nx run e2e:e2e   # run the e2e suite (or just: npm run e2e, which chains all
 npm run e2e:down     # tear the containers down
 ```
 
+> **⚠ Data-loss footgun if you reuse this stack as a local dev database:** the Postgres service uses
+> `tmpfs` for its data directory (`docker-compose.yml`) — deliberate, since this is meant to be
+> disposable per e2e run. Confirmed by direct testing: **any container restart** (`docker compose
+> restart`, not just `down`/`up`) remounts that tmpfs empty, silently wiping every table with no
+> warning or confirmation prompt. It's genuinely convenient to point `DATABASE_URL`/`REDIS_URL` at
+> this same stack for ad-hoc local dev/demo use instead of standing up Neon/Aiven - just know that a
+> Docker Desktop restart, a host reboot, or running `docker compose restart` for any reason will erase
+> every lead, campaign, call, and appointment with no recovery path. Re-run
+> `npx nx run database:prisma-migrate` (or `npm run e2e:migrate`) afterward to recreate the schema on
+> the now-empty database before the app will work again. If you want this data to actually persist,
+> swap the `tmpfs:` mount for a named volume in `docker-compose.yml` - deliberately not done here to
+> keep this file's original e2e-only purpose intact.
+
 Requires Docker (with the `docker compose` plugin) installed locally. CI runs this same suite as a
 separate `e2e` job using GitHub Actions service containers instead of `docker compose` — see
 `.github/workflows/ci.yml`.
@@ -607,13 +661,21 @@ output against ground truth:
   judge is given the rubric and the reply and returns a strict `{pass, reason}` verdict.
 
 `cases.ts` covers every tool (`check_appointment_availability`, `schedule_appointment`,
-`cancel_appointment`, `update_lead_status`, `add_to_dnc`, `schedule_followup`, `cancel_followup`,
-`record_sentiment`) and the chaining/negotiation behavior `SYSTEM_PROMPT` documents: booking only
-proceeds once availability is confirmed, changing an already-booked appointment/callback cancels the old
-one first, a follow-up request outside the legal calling window is renegotiated (ask the suggested time,
-confirm, retry with that exact time - not a re-guessed one) rather than silently dropped, and objection
-handling differs by sentiment (a neutral price objection gets a real rebuttal; very-negative sentiment
-drops it entirely). Add new cases alongside these in `apps/api/src/ai/evals/cases.ts`. Requires a real `GOOGLE_AI_API_KEY` exported (every
+`cancel_appointment`, `get_lead_email`, `update_lead_status`, `add_to_dnc`, `schedule_followup`,
+`cancel_followup`, `record_sentiment`, `end_call`) and the chaining/negotiation behavior
+`SYSTEM_PROMPT` documents: booking only proceeds once availability is confirmed, changing an
+already-booked appointment/callback cancels the old one first, a follow-up request outside the legal
+calling window is renegotiated (ask the suggested time, confirm, retry with that exact time - not a
+re-guessed one) rather than silently dropped, objection handling differs by sentiment (a neutral price
+objection gets a real rebuttal; very-negative sentiment drops it entirely), a booking with no email
+mentioned checks the lead record before asking, a near-term booking request ("in 10 minutes") is
+actually checked rather than refused over an invented minimum-notice rule, and a bare "yes" right
+after a booking confirmation does not trigger `end_call` on its own. `ALL_TOOLS` in `cases.ts` wires up
+every tool builder including `buildCallControlTools` (`end_call`) - the last of the three regressions
+above (the two most recently added) has no code-level guard behind it at all, so this eval coverage is
+the only thing that would catch it recurring; see "Ending a call from the agent side" and "No minimum
+lead time" above for the full context on why each exists. Add new cases alongside these in
+`apps/api/src/ai/evals/cases.ts`. Requires a real `GOOGLE_AI_API_KEY` exported (every
 other env var can keep the dummy value `tests/setupEnv.ts` already provides, since no tool handler is
 actually invoked here — only `agent.generateReply` is called):
 

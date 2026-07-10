@@ -47,7 +47,7 @@ const envSchema = z.object({
 
   AI_PROVIDER: z.enum(["google"]).default("google"),
   GOOGLE_AI_API_KEY: z.string().optional(),
-  GOOGLE_AI_MODEL: z.string().default("gemini-2.5-flash"),
+  GOOGLE_AI_MODEL: z.string().default("gemini-3.1-flash-lite"),
 
   // Bidirectional media streaming (real-time barge-in) - the default calling
   // path. Provider keys below are required unless this is explicitly turned
@@ -59,7 +59,11 @@ const envSchema = z.object({
   DEEPGRAM_API_KEY: z.string().optional(),
   DEEPGRAM_MODEL: z.string().default("nova-2-phonecall"),
   ELEVENLABS_API_KEY: z.string().optional(),
-  ELEVENLABS_VOICE_ID: z.string().optional(),
+  // Sarah - one of the few premade/"Default" ElevenLabs voices still usable via
+  // the API on a free-tier account (most Voice Library voices return a 402
+  // paid_plan_required error over the API even though they're free to preview
+  // in the dashboard).
+  ELEVENLABS_VOICE_ID: z.string().default("EXAVITQu4vr4xnSDxMaL"),
   // Voice tuning, passed through as ElevenLabs' `voice_settings` on every TTS
   // request - defaults favor a warmer, more natural-sounding phone voice over
   // ElevenLabs' own flatter/more consistent defaults (stability 0.5,

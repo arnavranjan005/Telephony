@@ -28,7 +28,13 @@ first, because parts of the API are currently single-instance.
 
 There are no Dockerfiles in this repo. The root `docker-compose.yml` is
 **not** a deployment artifact — it only provides throwaway Postgres/Redis
-containers for the local e2e test suite.
+containers for the local e2e test suite, and its Postgres service is
+deliberately configured with a `tmpfs` data directory (RAM-backed). Confirmed
+by direct testing: **any container restart wipes every table with no
+warning** — this is fine for disposable e2e runs but a real data-loss trap if
+this stack is ever pointed at as a "local dev database" for anything you'd
+mind losing. See README.md's e2e section for the full detail if you do reuse
+it that way locally; don't carry this pattern into production regardless.
 
 ## Requirements
 
@@ -67,10 +73,11 @@ calls too).
 |---|---|
 | `DEEPGRAM_API_KEY` | Streaming STT. |
 | `ELEVENLABS_API_KEY` | Streaming TTS. |
-| `ELEVENLABS_VOICE_ID` | The ElevenLabs voice used for every call. |
 
 Set `MEDIA_STREAM_ENABLED=false` to fall back to the legacy
-transcribe-then-speak webhook flow (no barge-in) and drop these three.
+transcribe-then-speak webhook flow (no barge-in) and drop these two.
+`ELEVENLABS_VOICE_ID` is also needed for media streaming but has a working
+default — see [Optional / tuning](#optional--tuning) below.
 
 ### Strongly recommended in production
 
@@ -92,7 +99,8 @@ transcribe-then-speak webhook flow (no barge-in) and drop these three.
 | `GOOGLE_CALENDAR_ID` | `primary` | Which calendar to book into. |
 | `AI_PROVIDER` | `google` | Only `google` (Gemini) is implemented today. |
 | `GOOGLE_AI_API_KEY` | — | Gemini key; the AI agent cannot reply without it. |
-| `GOOGLE_AI_MODEL` | `gemini-2.5-flash` | |
+| `GOOGLE_AI_MODEL` | `gemini-3.1-flash-lite` | Chosen for free-tier RPM/RPD headroom relative to other Gemini models at the time this was set. Free-tier quotas and model availability both shift over time and vary per project — check your live limits at https://aistudio.google.com/rate-limit rather than trusting this as a permanent recommendation, and switch models there if you outgrow it or it's deprecated. |
+| `ELEVENLABS_VOICE_ID` | `EXAVITQu4vr4xnSDxMaL` (Sarah) | A classic "Default"/premade ElevenLabs voice. **Only Default voices work over the API on a free-tier ElevenLabs account** — the larger, searchable Voice Library (voices with a descriptive name + tagline, e.g. "Elise – Warm, Natural and Engaging") can be freely previewed in the dashboard but returns `402 paid_plan_required` the instant you call the API with one on a free plan (confirmed by direct testing). Verify any replacement id actually returns audio from `POST https://api.elevenlabs.io/v1/text-to-speech/<id>` before deploying it. |
 | `MEDIA_STREAM_WS_PATH` | `/media-stream` | WebSocket upgrade path on the API server. |
 | `MEDIA_STREAM_SAMPLE_RATE` | `8000` | |
 | `DEEPGRAM_MODEL` | `nova-2-phonecall` | |
@@ -252,6 +260,15 @@ One-time bootstrap for the long-lived refresh token:
 2. Approve; Google redirects to `/api/calendar/oauth/callback`, which returns
    a `refresh_token`.
 3. Set it as `GOOGLE_REFRESH_TOKEN` on the API (and worker) and restart.
+
+**If the OAuth client's consent screen is in "Testing" mode** (the default for a new Google Cloud
+project, and likely still the case unless someone deliberately published/verified it): only accounts
+explicitly added as test users (Cloud Console → APIs & Services → OAuth consent screen → Test users,
+capped at 100) can complete step 1-2 at all — anyone else gets `Error 403: access_denied`. Refresh
+tokens issued in Testing mode can also expire after ~7 days of inactivity; if calendar bookings that
+worked at launch start failing silently a week or two later with no code change, redoing this flow to
+get a fresh token is the first thing to check. Publishing the app and completing Google's verification
+removes both limits, but isn't required just to connect one business's own calendar.
 
 ### 4. Smoke test
 
