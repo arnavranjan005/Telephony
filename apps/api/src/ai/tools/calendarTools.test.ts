@@ -1,6 +1,7 @@
 const isSlotAvailable = jest.fn();
 const createAppointment = jest.fn();
 const appointmentCreate = jest.fn();
+const leadFindUnique = jest.fn();
 
 jest.mock("../../google-calendar/calendarService", () => ({
   isSlotAvailable: (...args: unknown[]) => isSlotAvailable(...args),
@@ -8,7 +9,10 @@ jest.mock("../../google-calendar/calendarService", () => ({
 }));
 
 jest.mock("@telephony/database", () => ({
-  prisma: { appointment: { create: (...args: unknown[]) => appointmentCreate(...args) } },
+  prisma: {
+    appointment: { create: (...args: unknown[]) => appointmentCreate(...args) },
+    lead: { findUnique: (...args: unknown[]) => leadFindUnique(...args) },
+  },
 }));
 
 const cancelAppointmentById = jest.fn();
@@ -51,6 +55,7 @@ describe("calendarTools", () => {
 
   it("schedule_appointment refuses to book when the slot is unavailable", async () => {
     isSlotAvailable.mockResolvedValue(false);
+    leadFindUnique.mockResolvedValue({ email: null });
 
     const result = await scheduleAppointment.handler({
       title: "Sales call",
@@ -156,5 +161,74 @@ describe("calendarTools", () => {
     expect(isSlotAvailable).not.toHaveBeenCalled();
     expect(createAppointment).not.toHaveBeenCalled();
     expect(appointmentCreate).not.toHaveBeenCalled();
+  });
+
+  it("schedule_appointment trims incidental whitespace from an otherwise-valid attendeeEmail", async () => {
+    isSlotAvailable.mockResolvedValue(true);
+    createAppointment.mockResolvedValue({ eventId: "evt_trim", htmlLink: null, start: "", end: "" });
+    appointmentCreate.mockResolvedValue({ id: "appt_trim" });
+
+    const result = await scheduleAppointment.handler({
+      title: "Sales call",
+      startTime: "2025-01-15T14:00:00Z",
+      endTime: "2025-01-15T14:30:00Z",
+      attendeeEmail: " lead@example.com ",
+    });
+
+    expect(result).toEqual({ booked: true, appointmentId: "appt_trim", calendarEventId: "evt_trim" });
+    expect(createAppointment).toHaveBeenCalledWith(
+      expect.objectContaining({ attendeeEmail: "lead@example.com" })
+    );
+  });
+
+  it("schedule_appointment falls back to the lead's on-file email when the model omits attendeeEmail", async () => {
+    isSlotAvailable.mockResolvedValue(true);
+    leadFindUnique.mockResolvedValue({ email: "onfile@example.com" });
+    createAppointment.mockResolvedValue({ eventId: "evt_fallback", htmlLink: null, start: "", end: "" });
+    appointmentCreate.mockResolvedValue({ id: "appt_fallback" });
+
+    const result = await scheduleAppointment.handler({
+      title: "Sales call",
+      startTime: "2025-01-15T14:00:00Z",
+      endTime: "2025-01-15T14:30:00Z",
+    });
+
+    expect(result).toEqual({ booked: true, appointmentId: "appt_fallback", calendarEventId: "evt_fallback" });
+    expect(leadFindUnique).toHaveBeenCalledWith({ where: { id: "lead_1" }, select: { email: true } });
+    expect(createAppointment).toHaveBeenCalledWith(
+      expect.objectContaining({ attendeeEmail: "onfile@example.com" })
+    );
+  });
+
+  it("schedule_appointment books with no attendeeEmail when the lead has none on file either", async () => {
+    isSlotAvailable.mockResolvedValue(true);
+    leadFindUnique.mockResolvedValue({ email: null });
+    createAppointment.mockResolvedValue({ eventId: "evt_none", htmlLink: null, start: "", end: "" });
+    appointmentCreate.mockResolvedValue({ id: "appt_none" });
+
+    const result = await scheduleAppointment.handler({
+      title: "Sales call",
+      startTime: "2025-01-15T14:00:00Z",
+      endTime: "2025-01-15T14:30:00Z",
+    });
+
+    expect(result).toEqual({ booked: true, appointmentId: "appt_none", calendarEventId: "evt_none" });
+    expect(createAppointment).toHaveBeenCalledWith(expect.objectContaining({ attendeeEmail: undefined }));
+  });
+
+  it("schedule_appointment skips the lead-email lookup entirely when there is no lead on the call", async () => {
+    isSlotAvailable.mockResolvedValue(true);
+    createAppointment.mockResolvedValue({ eventId: "evt_nolead", htmlLink: null, start: "", end: "" });
+    appointmentCreate.mockResolvedValue({ id: "appt_nolead" });
+
+    const [, scheduleAppointmentNoLead] = buildCalendarTools({});
+    const result = await scheduleAppointmentNoLead.handler({
+      title: "Sales call",
+      startTime: "2025-01-15T14:00:00Z",
+      endTime: "2025-01-15T14:30:00Z",
+    });
+
+    expect(result).toEqual({ booked: true, appointmentId: "appt_nolead", calendarEventId: "evt_nolead" });
+    expect(leadFindUnique).not.toHaveBeenCalled();
   });
 });

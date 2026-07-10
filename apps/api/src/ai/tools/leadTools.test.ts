@@ -16,7 +16,7 @@ describe("leadTools", () => {
   it("update_lead_status updates the lead when a leadId is present in context", async () => {
     leadUpdate.mockResolvedValue({ id: "lead_1", status: "HOT" });
 
-    const [updateLead] = buildLeadTools({ leadId: "lead_1" });
+    const updateLead = buildLeadTools({ leadId: "lead_1" }).find((t) => t.name === "update_lead_status")!;
     const result = await updateLead.handler({ status: "HOT", notes: "Ready to buy" });
 
     expect(result).toEqual({ updated: true, leadId: "lead_1", status: "HOT" });
@@ -27,7 +27,7 @@ describe("leadTools", () => {
   });
 
   it("update_lead_status is a no-op when there is no lead associated with the call", async () => {
-    const [updateLead] = buildLeadTools({});
+    const updateLead = buildLeadTools({}).find((t) => t.name === "update_lead_status")!;
     const result = await updateLead.handler({ status: "WARM" });
 
     expect(result).toEqual({ updated: false, reason: "No lead associated with this call" });
@@ -38,7 +38,7 @@ describe("leadTools", () => {
     it("reports the email on file for the lead", async () => {
       leadFindUnique.mockResolvedValue({ email: "jane@example.com" });
 
-      const [, getLeadEmail] = buildLeadTools({ leadId: "lead_1" });
+      const getLeadEmail = buildLeadTools({ leadId: "lead_1" }).find((t) => t.name === "get_lead_email")!;
       const result = await getLeadEmail.handler({});
 
       expect(result).toEqual({ hasEmail: true, email: "jane@example.com" });
@@ -48,7 +48,7 @@ describe("leadTools", () => {
     it("reports hasEmail: false when the lead has no email on file", async () => {
       leadFindUnique.mockResolvedValue({ email: null });
 
-      const [, getLeadEmail] = buildLeadTools({ leadId: "lead_1" });
+      const getLeadEmail = buildLeadTools({ leadId: "lead_1" }).find((t) => t.name === "get_lead_email")!;
       const result = await getLeadEmail.handler({});
 
       expect(result).toEqual({ hasEmail: false });
@@ -57,14 +57,14 @@ describe("leadTools", () => {
     it("reports hasEmail: false when the lead record itself isn't found", async () => {
       leadFindUnique.mockResolvedValue(null);
 
-      const [, getLeadEmail] = buildLeadTools({ leadId: "lead_1" });
+      const getLeadEmail = buildLeadTools({ leadId: "lead_1" }).find((t) => t.name === "get_lead_email")!;
       const result = await getLeadEmail.handler({});
 
       expect(result).toEqual({ hasEmail: false });
     });
 
     it("is a no-op when there is no lead associated with the call", async () => {
-      const [, getLeadEmail] = buildLeadTools({});
+      const getLeadEmail = buildLeadTools({}).find((t) => t.name === "get_lead_email")!;
       const result = await getLeadEmail.handler({});
 
       expect(result).toEqual({ hasEmail: false, reason: "No lead associated with this call" });

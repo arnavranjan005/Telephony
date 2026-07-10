@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { ToolDefinition } from "../types";
 import { createAppointment, isSlotAvailable } from "../../google-calendar/calendarService";
 import { cancelAppointmentById, findCancelableAppointmentId } from "../../appointmentService";
@@ -9,15 +10,17 @@ export interface CalendarToolContext {
   callId?: string;
 }
 
-// Only validates the *shape* of a single already-normalized string the model
-// hands us - not for scanning free-form transcript text. Extracting an email
-// out of noisy ASR speech (a caller spelling one out loud - "john dot doe at
-// gmail dot com") is exactly what an LLM is good at and a regex isn't, so
-// that job is left to the model (see SYSTEM_PROMPT in
-// callConversationService.ts, which already has the full transcript in every
-// turn's message history). This regex only catches the narrower failure mode
-// of a malformed value slipping through to Google's API.
-const EMAIL_SHAPE_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Reuses the same z.string().email() validator apps/api/src/controllers/calendarController.ts
+// already applies to this exact field over REST, rather than a second, independently-drifting
+// regex. Only validates the *shape* of a single already-normalized string the model hands us -
+// not for scanning free-form transcript text. Extracting an email out of noisy ASR speech (a
+// caller spelling one out loud - "john dot doe at gmail dot com") is exactly what an LLM is good
+// at and a regex isn't, so that job is left to the model (see SYSTEM_PROMPT in
+// callConversationService.ts, which already has the full transcript in every turn's message
+// history). This only catches the narrower failure mode of a malformed value slipping through to
+// Google's API - trimmed first since the model's output can carry incidental whitespace that
+// would otherwise fail validation despite the address itself being fine.
+const emailShapeSchema = z.string().trim().email();
 
 /**
  * Builds the calendar-related tool definitions the AI agent can call during a
@@ -67,7 +70,7 @@ export function buildCalendarTools(context: CalendarToolContext): ToolDefinition
     handler: async (args) => {
       const startTime = args.startTime as string;
       const endTime = args.endTime as string;
-      const attendeeEmail = args.attendeeEmail as string | undefined;
+      let attendeeEmail = args.attendeeEmail as string | undefined;
 
       // Calendar availability alone doesn't rule out a stale/hallucinated
       // past date - an empty slot in the past is still "available" by that
@@ -78,13 +81,24 @@ export function buildCalendarTools(context: CalendarToolContext): ToolDefinition
 
       // A shape check on the model's own (already-normalized) output, not an
       // attempt to parse one out of raw transcript text - see the comment on
-      // EMAIL_SHAPE_REGEX above. Catches a garbled value before it reaches
+      // emailShapeSchema above. Catches a garbled value before it reaches
       // Google's API instead of silently sending it or erroring obscurely.
-      if (attendeeEmail && !EMAIL_SHAPE_REGEX.test(attendeeEmail)) {
-        return {
-          booked: false,
-          reason: "attendeeEmail doesn't look like a valid email address - confirm the spelling with the caller and try again",
-        };
+      if (attendeeEmail) {
+        const parsed = emailShapeSchema.safeParse(attendeeEmail);
+        if (!parsed.success) {
+          return {
+            booked: false,
+            reason: "attendeeEmail doesn't look like a valid email address - confirm the spelling with the caller and try again",
+          };
+        }
+        attendeeEmail = parsed.data;
+      } else if (context.leadId) {
+        // The model is instructed (SYSTEM_PROMPT, get_lead_email's description) to call
+        // get_lead_email and relay its result here itself - this is a deterministic backstop for
+        // when it skips that step or drops the value across the two separate tool calls, so a
+        // lead with a real email on file still gets a calendar invite rather than silently none.
+        const lead = await prisma.lead.findUnique({ where: { id: context.leadId }, select: { email: true } });
+        attendeeEmail = lead?.email ?? undefined;
       }
 
       const available = await isSlotAvailable(startTime, endTime);

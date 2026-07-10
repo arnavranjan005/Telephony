@@ -285,9 +285,14 @@ ASR transcript text isn't reliably regexable (there's no punctuation to match ag
 already normalized it), so that interpretation is left to the model, which reads its interpretation back
 for confirmation rather than assuming it heard correctly; (3) if still nothing, it asks the caller directly,
 but books anyway without an `attendeeEmail` if they decline - a missing email never blocks the booking.
-Whichever source it came from, `schedule_appointment` itself does a narrow shape check
-(`EMAIL_SHAPE_REGEX` in `calendarTools.ts`) on the final value before it reaches Google's API - a reliable
-use of regex because it validates one already-normalized candidate string, not free-form speech.
+Whichever source it came from, `schedule_appointment` itself validates the final value's shape (`zod`'s
+`z.string().trim().email()`, reusing the same validator `calendarController.ts` already applies to this
+field over REST) before it reaches Google's API - a reliable use of a shape check because it validates one
+already-normalized candidate string, not free-form speech. If the model omits `attendeeEmail` entirely
+(skips `get_lead_email`, or drops its result crossing into the separate `schedule_appointment` call),
+the handler falls back to looking up `Lead.email` itself via `context.leadId` - a deterministic backstop
+so a lead with a real email on file still gets a calendar invite even if the two-tool-call relay the
+model is instructed to do doesn't happen.
 
 ### Telnyx SDK gotcha: `calls.create` mutates the shared client
 

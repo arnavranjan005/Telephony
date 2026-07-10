@@ -1,5 +1,6 @@
 import { SYSTEM_PROMPT } from "../../callConversationService";
 import { buildCalendarTools } from "../tools/calendarTools";
+import { buildCallControlTools } from "../tools/callControlTools";
 import { buildComplianceTools } from "../tools/complianceTools";
 import { buildFollowUpTools } from "../tools/followUpTools";
 import { buildLeadTools } from "../tools/leadTools";
@@ -16,6 +17,7 @@ const ALL_TOOLS = [
   ...buildComplianceTools({ phoneNumber: "+15550001111" }),
   ...buildFollowUpTools({ leadId: "eval-lead", phoneNumber: "+15550001111", callId: "eval-call" }),
   ...buildSentimentTools(),
+  ...buildCallControlTools({ callId: "eval-call" }),
 ];
 
 export const EVAL_CASES: EvalCase[] = [
@@ -64,6 +66,60 @@ export const EVAL_CASES: EvalCase[] = [
     rubric:
       "The reply must confirm the appointment is booked for 2pm on August 1st, be 1-3 sentences, and must not " +
       "state any detail (a different time, a price, a guarantee) that wasn't in the tool results above.",
+  },
+  {
+    // Regression case for the exact bug this fix targets: the caller's bare "yes" here is
+    // confirming the restated booking details are correct, not agreeing to end the call - the
+    // model previously misread this as "just finished wrapping up a booking" grounds to call
+    // end_call immediately. No rubricExemptToolCalls for end_call here (unlike other cases) is
+    // deliberate: if the model calls end_call instead of replying with text, the harness's own
+    // "expected text content to grade against the rubric, got tool calls only" check fails this
+    // case outright, since there'd be no reply.content left to grade.
+    name: "bare confirmation after a booking does not trigger a premature end_call",
+    systemPrompt: SYSTEM_PROMPT,
+    tools: ALL_TOOLS,
+    messages: [
+      { role: "user", content: "I'd like to book a consultation for August 1st at 2pm, my email is lead@example.com" },
+      {
+        role: "assistant",
+        content: "",
+        toolName: "check_appointment_availability",
+        toolArgs: { startTime: "2026-08-01T14:00:00Z", endTime: "2026-08-01T14:30:00Z" },
+      },
+      { role: "tool", content: JSON.stringify({ available: true }), toolName: "check_appointment_availability" },
+      {
+        role: "assistant",
+        content: "",
+        toolName: "schedule_appointment",
+        toolArgs: {
+          title: "Consultation call",
+          startTime: "2026-08-01T14:00:00Z",
+          endTime: "2026-08-01T14:30:00Z",
+          attendeeEmail: "lead@example.com",
+        },
+      },
+      { role: "tool", content: JSON.stringify({ booked: true, googleEventId: "evt_eval_2" }), toolName: "schedule_appointment" },
+      { role: "assistant", content: "Great, you're booked for 2pm on August 1st. Anything else?" },
+      { role: "user", content: "Yes." },
+    ],
+    rubric:
+      "The reply must not treat the caller's bare 'yes' as agreement to end the call - it must not say goodbye " +
+      "or wrap up the conversation. Instead it must ask what the caller needs, or otherwise continue the " +
+      "conversation to find out what they meant by 'yes' (e.g. clarify what they'd like help with).",
+  },
+  {
+    // Regression case for the other bug this fix targets: the model was refusing near-term
+    // bookings ("in 10 minutes") based on an invented minimum-lead-time rule that appears
+    // nowhere in code or in either tool's description. A real refusal here shows up as no
+    // check_appointment_availability call at all (the model declines in plain text instead),
+    // which this asserts against.
+    name: "near-term booking request checks availability instead of refusing over short notice",
+    systemPrompt: SYSTEM_PROMPT,
+    tools: ALL_TOOLS,
+    messages: [
+      { role: "user", content: "Can you book me a quick call in about 5 minutes from now?" },
+    ],
+    expectedToolCalls: [{ name: "check_appointment_availability" }],
   },
   {
     // Ends on a tool result (like the booking case above) rather than a bare
