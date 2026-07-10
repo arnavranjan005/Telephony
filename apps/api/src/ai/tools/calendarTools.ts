@@ -92,13 +92,6 @@ export function buildCalendarTools(context: CalendarToolContext): ToolDefinition
           };
         }
         attendeeEmail = parsed.data;
-      } else if (context.leadId) {
-        // The model is instructed (SYSTEM_PROMPT, get_lead_email's description) to call
-        // get_lead_email and relay its result here itself - this is a deterministic backstop for
-        // when it skips that step or drops the value across the two separate tool calls, so a
-        // lead with a real email on file still gets a calendar invite rather than silently none.
-        const lead = await prisma.lead.findUnique({ where: { id: context.leadId }, select: { email: true } });
-        attendeeEmail = lead?.email ?? undefined;
       }
 
       const available = await isSlotAvailable(startTime, endTime);

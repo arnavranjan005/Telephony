@@ -288,11 +288,10 @@ but books anyway without an `attendeeEmail` if they decline - a missing email ne
 Whichever source it came from, `schedule_appointment` itself validates the final value's shape (`zod`'s
 `z.string().trim().email()`, reusing the same validator `calendarController.ts` already applies to this
 field over REST) before it reaches Google's API - a reliable use of a shape check because it validates one
-already-normalized candidate string, not free-form speech. If the model omits `attendeeEmail` entirely
-(skips `get_lead_email`, or drops its result crossing into the separate `schedule_appointment` call),
-the handler falls back to looking up `Lead.email` itself via `context.leadId` - a deterministic backstop
-so a lead with a real email on file still gets a calendar invite even if the two-tool-call relay the
-model is instructed to do doesn't happen.
+already-normalized candidate string, not free-form speech. There's deliberately no server-side fallback to
+`Lead.email` when `attendeeEmail` is omitted - a lead having *some* email on file isn't the same as the
+caller having confirmed it for *this* booking, so an omitted `attendeeEmail` always books without one
+rather than silently substituting an address the caller never confirmed on this call.
 
 ### Telnyx SDK gotcha: `calls.create` mutates the shared client
 
