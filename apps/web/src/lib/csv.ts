@@ -1,5 +1,12 @@
 import type { BulkCreateLeadRow, LeadStatus } from "@telephony/shared-types";
-import { LeadStatusValues } from "@telephony/shared-types";
+
+// Kept local (not imported from @telephony/shared-types) on purpose: the web
+// app only takes type-only imports from shared-types, which tsc/SWC erase, so
+// `npm run dev:web` works on a fresh clone without first building the package.
+// A runtime value import would resolve to shared-types' built dist/ and break
+// dev until that build ran. Source of truth for these values is
+// LeadStatusValues in @telephony/shared-types.
+const LEAD_STATUS_VALUES: LeadStatus[] = ["COLD", "WARM", "HOT"];
 
 /**
  * Minimal RFC-4180-ish CSV parser: handles quoted fields, commas and
@@ -124,7 +131,7 @@ export function parseLeadsCsv(text: string): CsvParseResult {
     let status: LeadStatus | undefined;
     if (statusRaw) {
       const upper = statusRaw.toUpperCase();
-      if (!LeadStatusValues.includes(upper as LeadStatus)) {
+      if (!LEAD_STATUS_VALUES.includes(upper as LeadStatus)) {
         invalid.push({ line, reason: `Invalid status "${statusRaw}" (expected COLD, WARM or HOT)` });
         continue;
       }

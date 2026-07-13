@@ -28,7 +28,13 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Plus, Upload, FileDown } from "lucide-react";
 import { parseLeadsCsv, LEAD_CSV_TEMPLATE, type CsvParseResult } from "@/lib/csv";
-import { BULK_IMPORT_MAX_ROWS } from "@telephony/shared-types";
+
+// Local copy (not a runtime import from @telephony/shared-types) so the web
+// app keeps only type-only imports from that package - a value import would
+// resolve to its built dist/ and break `npm run dev:web` on a fresh clone.
+// The API's BULK_IMPORT_MAX_ROWS is the enforced source of truth; this only
+// gates the client-side UX, so a mismatch just changes when the notice shows.
+const BULK_IMPORT_MAX_ROWS = 2000;
 
 const STATUS_TABS: Array<LeadStatus | "ALL"> = ["ALL", "COLD", "WARM", "HOT"];
 
