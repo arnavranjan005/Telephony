@@ -135,6 +135,11 @@ export default function CampaignsPage() {
   );
 }
 
+// Page size for the campaign lead picker's server-side search. Kept local
+// (not imported from @telephony/shared-types) so the web app keeps only
+// type-only imports from that package - see apiClient/csv for the rationale.
+const PICKER_PAGE_SIZE = 50;
+
 function CreateCampaignDialog({
   open,
   onOpenChange,
@@ -154,6 +159,8 @@ function CreateCampaignDialog({
   const [openingLineDefault, setOpeningLineDefault] = useState<string | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [leadSearch, setLeadSearch] = useState("");
+  const [leadsLoading, setLeadsLoading] = useState(false);
+  const [leadsNextCursor, setLeadsNextCursor] = useState<string | null>(null);
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -161,13 +168,39 @@ function CreateCampaignDialog({
     apiClient.getOpeningLineDefault().then((data) => setOpeningLineDefault(data.text));
   }, []);
 
-  // Load existing leads to pick from once the dialog opens, so a campaign can
-  // be built by selecting saved leads instead of retyping names and numbers.
+  // Search leads server-side (debounced) so the picker can find any lead in
+  // the whole table, not just a preloaded page - the search box hits the API
+  // by name/number rather than filtering a fixed local list. Runs on open
+  // (empty query = most recent leads) and on every keystroke.
   useEffect(() => {
-    if (open && leads.length === 0) {
-      apiClient.listLeads({ limit: 200 }).then((data) => setLeads(data.leads)).catch(() => {});
-    }
-  }, [open, leads.length]);
+    if (!open) return;
+    const q = leadSearch.trim();
+    setLeadsLoading(true);
+    const handle = setTimeout(() => {
+      apiClient
+        .listLeads({ search: q || undefined, limit: PICKER_PAGE_SIZE })
+        .then((data) => {
+          setLeads(data.leads);
+          setLeadsNextCursor(data.nextCursor);
+        })
+        .catch(() => {})
+        .finally(() => setLeadsLoading(false));
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [open, leadSearch]);
+
+  function loadMoreLeads() {
+    if (!leadsNextCursor || leadsLoading) return;
+    setLeadsLoading(true);
+    apiClient
+      .listLeads({ search: leadSearch.trim() || undefined, cursor: leadsNextCursor, limit: PICKER_PAGE_SIZE })
+      .then((data) => {
+        setLeads((prev) => [...prev, ...data.leads]);
+        setLeadsNextCursor(data.nextCursor);
+      })
+      .catch(() => {})
+      .finally(() => setLeadsLoading(false));
+  }
 
   function toggleLead(id: string) {
     setSelectedLeadIds((prev) => {
@@ -177,15 +210,6 @@ function CreateCampaignDialog({
       return next;
     });
   }
-
-  const filteredLeads = leads.filter((lead) => {
-    const q = leadSearch.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      [lead.firstName, lead.lastName].filter(Boolean).join(" ").toLowerCase().includes(q) ||
-      lead.phoneNumber.toLowerCase().includes(q)
-    );
-  });
 
   async function submit() {
     const typedContacts = contactsText
@@ -228,6 +252,7 @@ function CreateCampaignDialog({
       setContactsText("");
       setSelectedLeadIds(new Set());
       setLeadSearch("");
+      setLeadsNextCursor(null);
       onCreated();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create campaign");
@@ -308,34 +333,50 @@ function CreateCampaignDialog({
               />
             </div>
             <div className="max-h-44 overflow-y-auto rounded-md border">
-              {filteredLeads.length === 0 ? (
+              {leads.length === 0 ? (
                 <p className="px-3 py-4 text-center text-xs text-muted-foreground">
-                  {leads.length === 0 ? "No leads yet — add contacts below." : "No leads match that search."}
+                  {leadsLoading
+                    ? "Searching…"
+                    : leadSearch.trim()
+                      ? "No leads match that search."
+                      : "No leads yet — add contacts below."}
                 </p>
               ) : (
-                filteredLeads.map((lead) => {
-                  const selected = selectedLeadIds.has(lead.id);
-                  return (
+                <>
+                  {leads.map((lead) => {
+                    const selected = selectedLeadIds.has(lead.id);
+                    return (
+                      <button
+                        type="button"
+                        key={lead.id}
+                        onClick={() => toggleLead(lead.id)}
+                        className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+                      >
+                        <span className="min-w-0 flex-1 truncate">
+                          {[lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.phoneNumber}
+                          <span className="ml-2 font-mono text-xs text-muted-foreground">{lead.phoneNumber}</span>
+                        </span>
+                        <span
+                          className={`flex size-4 shrink-0 items-center justify-center rounded border ${
+                            selected ? "border-primary bg-primary text-primary-foreground" : "border-input"
+                          }`}
+                        >
+                          {selected && <Check className="size-3" />}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {leadsNextCursor && (
                     <button
                       type="button"
-                      key={lead.id}
-                      onClick={() => toggleLead(lead.id)}
-                      className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+                      onClick={loadMoreLeads}
+                      disabled={leadsLoading}
+                      className="w-full px-3 py-1.5 text-center text-xs text-muted-foreground hover:bg-accent"
                     >
-                      <span className="min-w-0 flex-1 truncate">
-                        {[lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.phoneNumber}
-                        <span className="ml-2 font-mono text-xs text-muted-foreground">{lead.phoneNumber}</span>
-                      </span>
-                      <span
-                        className={`flex size-4 shrink-0 items-center justify-center rounded border ${
-                          selected ? "border-primary bg-primary text-primary-foreground" : "border-input"
-                        }`}
-                      >
-                        {selected && <Check className="size-3" />}
-                      </span>
+                      {leadsLoading ? "Loading…" : "Load more"}
                     </button>
-                  );
-                })
+                  )}
+                </>
               )}
             </div>
           </div>

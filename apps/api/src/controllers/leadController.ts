@@ -105,6 +105,7 @@ export async function bulkCreateLeads(req: Request, res: Response) {
 export async function listLeads(req: Request, res: Response) {
   const status = req.query.status as LeadStatus | undefined;
   const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
+  const search = typeof req.query.search === "string" ? req.query.search.trim() : undefined;
 
   // Clamp the requested page size to a sane range; ignore garbage input.
   const requested = Number(req.query.limit);
@@ -112,13 +113,29 @@ export async function listLeads(req: Request, res: Response) {
     ? Math.min(Math.max(Math.trunc(requested), 1), LEADS_PAGE_SIZE_MAX)
     : LEADS_PAGE_SIZE;
 
+  // Search matches name or phone so the lead picker can find any lead across
+  // the whole table (not just a preloaded page). OR across firstName/lastName/
+  // phoneNumber, case-insensitive contains; combined with the status filter.
+  const where: Prisma.LeadWhereInput = {
+    ...(status ? { status } : {}),
+    ...(search
+      ? {
+          OR: [
+            { firstName: { contains: search, mode: "insensitive" } },
+            { lastName: { contains: search, mode: "insensitive" } },
+            { phoneNumber: { contains: search } },
+          ],
+        }
+      : {}),
+  };
+
   // Cursor pagination: order by (createdAt desc, id desc) so the sort is
   // total even when several leads share a createdAt, then fetch one extra row
   // to tell whether another page exists. Bulk imports write many leads with
   // near-identical timestamps, so the id tie-breaker is what keeps paging from
   // skipping or repeating rows.
   const rows = await prisma.lead.findMany({
-    where: status ? { status } : undefined,
+    where,
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
