@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import { Readable } from "node:stream";
 import { z } from "zod";
 import { env } from "@telephony/config";
 import { prisma, CallStatus, CallDirection } from "@telephony/database";
@@ -12,7 +13,9 @@ import {
   buildStreamUrl,
   hangupCall,
   startRecording,
+  getRecordingDownloadUrl,
 } from "@telephony/domain";
+import { enqueueRecordingDeletion } from "@telephony/queue";
 import { verifyTelnyxSignature } from "../telnyx/webhookVerifier";
 import { handleCallerUtterance } from "../callConversationService";
 import { callEventBus } from "../sse/eventBus";
@@ -67,11 +70,62 @@ export async function getCall(req: Request, res: Response) {
   res.json({ call });
 }
 
+/**
+ * Streams the call's recording audio through the API. We mint a fresh Telnyx
+ * download URL per request (from the stored call_session_id, since the raw
+ * URLs expire in ~10 minutes) and proxy the bytes, rather than redirecting to
+ * Telnyx directly: Telnyx's signed URLs are cross-origin and send no CORS
+ * headers, so a browser <audio> element can't reliably follow a redirect to
+ * them for its range requests. Proxying keeps the media same-origin and
+ * forwards HTTP Range so seeking works. Add ?download=1 to force a file
+ * download instead of inline playback. Returns 404 if the call has no
+ * recording, or if it's already been deleted after the retention window.
+ */
+export async function getCallRecording(req: Request, res: Response) {
+  const call = await prisma.call.findUnique({
+    where: { id: req.params.callId },
+    select: { id: true, telnyxCallSessionId: true },
+  });
+  if (!call) return res.status(404).json({ error: "Call not found" });
+  if (!call.telnyxCallSessionId) {
+    return res.status(404).json({ error: "No recording available for this call" });
+  }
+
+  const downloadUrl = await getRecordingDownloadUrl(call.telnyxCallSessionId);
+  if (!downloadUrl) {
+    return res.status(404).json({ error: "Recording is no longer available" });
+  }
+
+  const range = req.header("range");
+  const upstream = await fetch(downloadUrl, { headers: range ? { Range: range } : {} });
+  if (!upstream.ok) {
+    return res.status(502).json({ error: "Failed to fetch recording from Telnyx" });
+  }
+
+  res.status(upstream.status); // 206 when a Range was served, else 200
+  res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "audio/mpeg");
+  res.setHeader("Accept-Ranges", "bytes");
+  // The admin panel is served from a different origin than this API, so
+  // helmet's default Cross-Origin-Resource-Policy: same-origin would block a
+  // browser <audio>/<a download> from loading this response. Allow it.
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  for (const header of ["content-length", "content-range"]) {
+    const value = upstream.headers.get(header);
+    if (value) res.setHeader(header, value);
+  }
+  const disposition = req.query.download !== undefined ? "attachment" : "inline";
+  res.setHeader("Content-Disposition", `${disposition}; filename="call-${call.id}.mp3"`);
+
+  if (!upstream.body) return res.end();
+  Readable.fromWeb(upstream.body as Parameters<typeof Readable.fromWeb>[0]).pipe(res);
+}
+
 type TelnyxWebhookPayload = {
   data?: {
     event_type?: string;
     payload?: {
       call_control_id?: string;
+      call_session_id?: string;
       client_state?: string;
       from?: string;
       to?: string;
@@ -171,9 +225,27 @@ export async function handleTelnyxWebhook(req: Request, res: Response) {
 
       case "call.recording.saved": {
         const call = await prisma.call.findUnique({ where: { telnyxCallControlId: callControlId } });
-        const recordingUrl = payload.recording_urls?.mp3;
-        if (call && recordingUrl) {
-          await prisma.call.update({ where: { id: call.id }, data: { recordingUrl } });
+        // The webhook's own recording_urls are signed links that expire in ~10
+        // minutes, so we don't persist them. Instead we keep call_session_id
+        // (the durable handle) and expose a stable in-app URL that mints a
+        // fresh Telnyx download link on each request (see getCallRecording).
+        const callSessionId = payload.call_session_id;
+        if (call && callSessionId) {
+          await prisma.call.update({
+            where: { id: call.id },
+            data: {
+              telnyxCallSessionId: callSessionId,
+              recordingUrl: `${env.BASE_URL}/api/calls/${call.id}/recording`,
+            },
+          });
+          // Enforce the retention window: schedule the recording's deletion
+          // from Telnyx (which otherwise keeps it ~1 year) after
+          // RECORDING_RETENTION_HOURS.
+          await enqueueRecordingDeletion(call.id, env.RECORDING_RETENTION_HOURS);
+          // Recordings save a few seconds after hangup, so notify the dashboard
+          // to live-refresh: a call-detail view open at that moment can pull in
+          // the now-available player without a manual reopen.
+          callEventBus.publish(call.id, "call.recording.saved", { callId: call.id });
         }
         break;
       }

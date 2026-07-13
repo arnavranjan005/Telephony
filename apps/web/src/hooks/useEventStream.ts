@@ -44,6 +44,7 @@ export function useEventStream(onEvent?: (event: DashboardEvent) => void) {
       "call.answered",
       "call.transcript",
       "call.hangup",
+      "call.recording.saved",
       "conversation.message",
       "lead.created",
       "lead.updated",

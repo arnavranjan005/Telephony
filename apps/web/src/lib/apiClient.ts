@@ -63,6 +63,12 @@ export const apiClient = {
   // Calls
   listCalls: () => apiFetch<{ calls: Call[] }>("/api/calls"),
   getCall: (callId: string) => apiFetch<{ call: CallWithDetails }>(`/api/calls/${callId}`),
+  // Absolute URL to a call's recording. The endpoint streams the audio from
+  // Telnyx through the API (same-origin, range-enabled), so it's safe to use
+  // directly as an <audio> src. Pass { download: true } to force a file
+  // download (Content-Disposition: attachment) instead of inline playback.
+  recordingHref: (callId: string, opts?: { download?: boolean }) =>
+    `${API_URL}/api/calls/${callId}/recording${opts?.download ? "?download=1" : ""}`,
   createOutboundCall: (input: { toNumber: string; leadId?: string; streaming?: boolean }) =>
     apiFetch<{ call: Call }>("/api/calls/outbound", { method: "POST", body: JSON.stringify(input) }),
 

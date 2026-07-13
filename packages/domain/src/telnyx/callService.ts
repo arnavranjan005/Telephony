@@ -80,6 +80,59 @@ export async function startRecording(callControlId: string) {
   await telnyxClient.calls.recordStart(callControlId, { format: "mp3", channels: "dual" } as never);
 }
 
+/** A Telnyx recording resource, pared down to the fields we actually read. */
+interface TelnyxRecording {
+  id?: string;
+  download_urls?: { mp3?: string | null; wav?: string | null };
+}
+
+/**
+ * Looks up the recording(s) Telnyx holds for a call session. The
+ * `call.recording.saved` webhook only hands us a signed URL that expires in
+ * ~10 minutes and no recording id, so the durable handle we keep is the
+ * call_session_id - the Recordings list API filters on it, and each list
+ * response mints fresh (also ~10-min) download URLs, so calling this on
+ * demand always yields a currently-valid link.
+ */
+async function listRecordingsForSession(callSessionId: string): Promise<TelnyxRecording[]> {
+  const response = await telnyxClient.callRecordings.list({
+    filter: { call_session_id: callSessionId },
+  } as never);
+  const data = (response as { data?: TelnyxRecording[] }).data;
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * Returns a freshly-minted, ~10-minute-valid MP3 download URL for a call's
+ * recording, or null if Telnyx has none (e.g. it was already deleted once the
+ * retention window elapsed). Callers redirect to this rather than persisting
+ * it, since it expires.
+ */
+export async function getRecordingDownloadUrl(callSessionId: string): Promise<string | null> {
+  const recordings = await listRecordingsForSession(callSessionId);
+  for (const recording of recordings) {
+    const mp3 = recording.download_urls?.mp3;
+    if (mp3) return mp3;
+  }
+  return null;
+}
+
+/**
+ * Permanently deletes every recording Telnyx holds for a call session and
+ * returns how many were removed. Used by the retention cleanup job. Idempotent
+ * in effect: a session with no (remaining) recordings is a no-op that returns 0.
+ */
+export async function deleteRecordingsForSession(callSessionId: string): Promise<number> {
+  const recordings = await listRecordingsForSession(callSessionId);
+  let deleted = 0;
+  for (const recording of recordings) {
+    if (!recording.id) continue;
+    await telnyxClient.callRecordings.del(recording.id);
+    deleted += 1;
+  }
+  return deleted;
+}
+
 export function decodeClientState(clientState?: string): Record<string, unknown> {
   if (!clientState) return {};
   try {

@@ -25,6 +25,11 @@ export interface Call {
   endedAt: string | null;
   durationSeconds: number | null;
   outcome: string | null;
+  /**
+   * Stable in-app link (…/calls/:id/recording) that redirects to a freshly
+   * minted Telnyx download URL. Null before a recording is saved, or once it
+   * has been deleted after the retention window.
+   */
   recordingUrl: string | null;
   leadId: string | null;
   createdAt: string;

@@ -94,6 +94,7 @@ default — see [Optional / tuning](#optional--tuning) below.
 | `PORT` | `3000` | API listen port. |
 | `REDIS_TLS_REJECT_UNAUTHORIZED` | `true` | Keep `true`; `false` is only an escape hatch for broken CA chains. |
 | `DIAL_RATE_LIMIT_MAX` / `DIAL_RATE_LIMIT_DURATION_MS` | `5` / `1000` | Worker-side outbound dial throughput cap (jobs per window), applied per worker instance. |
+| `RECORDING_RETENTION_HOURS` | `12` | Hours a call recording is kept on Telnyx before the worker deletes it via the API (Telnyx has no native retention control; its own default is ~1 year). After the window elapses the recording is permanently deleted and `GET /api/calls/:id/recording` returns 404. Requires the worker to be running to take effect. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | — | OAuth client for Calendar. `GOOGLE_REDIRECT_URI` must be `https://<api-domain>/api/calendar/oauth/callback` and registered on the OAuth client. |
 | `GOOGLE_REFRESH_TOKEN` | — | Obtained once via the OAuth flow ([below](#3-connect-google-calendar)). Calendar booking fails without it. |
 | `GOOGLE_CALENDAR_ID` | `primary` | Which calendar to book into. |

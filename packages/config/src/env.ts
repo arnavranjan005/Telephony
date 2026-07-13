@@ -39,6 +39,14 @@ const envSchema = z.object({
   TELNYX_FROM_NUMBER: z.string().min(1, "TELNYX_FROM_NUMBER is required"),
   TELNYX_WEBHOOK_SIGNING_SECRET: z.string().optional(),
 
+  // How long (in hours) a call recording is kept on Telnyx before we delete
+  // it via the API. Telnyx has no native retention control - its own default
+  // keeps recordings ~1 year - so a delayed cleanup job (see
+  // packages/queue/recordingCleanupQueue.ts) enforces this window instead.
+  // After it elapses the recording is permanently gone from Telnyx and the
+  // on-demand /calls/:id/recording endpoint will 404.
+  RECORDING_RETENTION_HOURS: z.coerce.number().positive().default(12),
+
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().optional(),

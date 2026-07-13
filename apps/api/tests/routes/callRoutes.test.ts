@@ -28,6 +28,7 @@ const speakText = jest.fn();
 const startTranscription = jest.fn();
 const finalizeDialOutcome = jest.fn();
 const startRecording = jest.fn();
+const getRecordingDownloadUrl = jest.fn();
 
 jest.mock("@telephony/domain", () => ({
   placeOutboundCall: (...args: unknown[]) => placeOutboundCall(...args),
@@ -36,6 +37,7 @@ jest.mock("@telephony/domain", () => ({
   startTranscription: (...args: unknown[]) => startTranscription(...args),
   finalizeDialOutcome: (...args: unknown[]) => finalizeDialOutcome(...args),
   startRecording: (...args: unknown[]) => startRecording(...args),
+  getRecordingDownloadUrl: (...args: unknown[]) => getRecordingDownloadUrl(...args),
   decodeClientState: (clientState?: string) => {
     if (!clientState) return {};
     try {
@@ -44,6 +46,11 @@ jest.mock("@telephony/domain", () => ({
       return {};
     }
   },
+}));
+
+const enqueueRecordingDeletion = jest.fn();
+jest.mock("@telephony/queue", () => ({
+  enqueueRecordingDeletion: (...args: unknown[]) => enqueueRecordingDeletion(...args),
 }));
 
 const verifyTelnyxSignature = jest.fn();
@@ -57,6 +64,7 @@ jest.mock("../../src/callConversationService", () => ({
 
 import request from "supertest";
 import { createApp } from "../../src/app";
+import { callEventBus } from "../../src/sse/eventBus";
 
 const app = createApp();
 
@@ -184,6 +192,143 @@ describe("Call routes", () => {
       await sendWebhook("call.answered", { call_control_id: "ctrl_1" });
 
       expect(startRecording).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("call.recording.saved", () => {
+    it("stores the call_session_id and a stable in-app recording URL, schedules deletion, and notifies the dashboard", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallControlId: "ctrl_1" });
+      callUpdate.mockResolvedValue({ id: "call_1" });
+      const publishSpy = jest.spyOn(callEventBus, "publish");
+
+      const res = await sendWebhook("call.recording.saved", {
+        call_control_id: "ctrl_1",
+        call_session_id: "sess_1",
+        // The signed recording_urls Telnyx sends expire in ~10 min - we
+        // deliberately don't persist them.
+        recording_urls: { mp3: "https://signed.telnyx.example/rec.mp3?expires=soon" },
+      });
+
+      expect(res.status).toBe(200);
+      expect(callUpdate).toHaveBeenCalledWith({
+        where: { id: "call_1" },
+        data: {
+          telnyxCallSessionId: "sess_1",
+          recordingUrl: "http://localhost:3000/api/calls/call_1/recording",
+        },
+      });
+      expect(enqueueRecordingDeletion).toHaveBeenCalledWith("call_1", 12);
+      // Live-update signal so an open call-detail sheet pulls in the player.
+      expect(publishSpy).toHaveBeenCalledWith("call_1", "call.recording.saved", { callId: "call_1" });
+      publishSpy.mockRestore();
+    });
+
+    it("does nothing when the recording webhook carries no call_session_id", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallControlId: "ctrl_1" });
+
+      await sendWebhook("call.recording.saved", { call_control_id: "ctrl_1" });
+
+      expect(callUpdate).not.toHaveBeenCalled();
+      expect(enqueueRecordingDeletion).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("GET /api/calls/:callId/recording", () => {
+    const originalFetch = global.fetch;
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    it("streams the recording audio proxied from a freshly minted Telnyx URL", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallSessionId: "sess_1" });
+      getRecordingDownloadUrl.mockResolvedValue("https://fresh.telnyx.example/rec.mp3");
+      const fetchMock = jest
+        .fn()
+        .mockResolvedValue(new Response(Buffer.from("ID3-fake-mp3-bytes"), {
+          status: 200,
+          headers: { "content-type": "audio/mpeg", "content-length": "18" },
+        }));
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const res = await request(app).get("/api/calls/call_1/recording");
+
+      expect(res.status).toBe(200);
+      expect(getRecordingDownloadUrl).toHaveBeenCalledWith("sess_1");
+      expect(fetchMock).toHaveBeenCalledWith("https://fresh.telnyx.example/rec.mp3", { headers: {} });
+      expect(res.headers["content-type"]).toContain("audio/mpeg");
+      expect(res.headers["content-disposition"]).toContain("inline");
+      // Must be embeddable cross-origin (admin panel != API origin), overriding
+      // helmet's default same-origin CORP.
+      expect(res.headers["cross-origin-resource-policy"]).toBe("cross-origin");
+      expect(res.body).toBeInstanceOf(Buffer);
+      expect(res.body.toString()).toBe("ID3-fake-mp3-bytes");
+    });
+
+    it("forwards the client's Range header and returns 206 for partial content", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallSessionId: "sess_1" });
+      getRecordingDownloadUrl.mockResolvedValue("https://fresh.telnyx.example/rec.mp3");
+      const fetchMock = jest.fn().mockResolvedValue(
+        new Response(Buffer.from("mp3"), {
+          status: 206,
+          headers: { "content-type": "audio/mpeg", "content-range": "bytes 0-2/18", "content-length": "3" },
+        })
+      );
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const res = await request(app).get("/api/calls/call_1/recording").set("Range", "bytes=0-2");
+
+      expect(res.status).toBe(206);
+      expect(fetchMock).toHaveBeenCalledWith("https://fresh.telnyx.example/rec.mp3", {
+        headers: { Range: "bytes=0-2" },
+      });
+      expect(res.headers["content-range"]).toBe("bytes 0-2/18");
+    });
+
+    it("forces a download (attachment) when ?download is present", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallSessionId: "sess_1" });
+      getRecordingDownloadUrl.mockResolvedValue("https://fresh.telnyx.example/rec.mp3");
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue(new Response(Buffer.from("mp3"), {
+          status: 200,
+          headers: { "content-type": "audio/mpeg" },
+        })) as unknown as typeof fetch;
+
+      const res = await request(app).get("/api/calls/call_1/recording?download=1");
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-disposition"]).toContain("attachment");
+      expect(res.headers["content-disposition"]).toContain('filename="call-call_1.mp3"');
+    });
+
+    it("returns 502 when Telnyx fails to serve the recording", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallSessionId: "sess_1" });
+      getRecordingDownloadUrl.mockResolvedValue("https://fresh.telnyx.example/rec.mp3");
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue(new Response("nope", { status: 403 })) as unknown as typeof fetch;
+
+      const res = await request(app).get("/api/calls/call_1/recording");
+
+      expect(res.status).toBe(502);
+    });
+
+    it("returns 404 when the call has no recording", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallSessionId: null });
+
+      const res = await request(app).get("/api/calls/call_1/recording");
+
+      expect(res.status).toBe(404);
+      expect(getRecordingDownloadUrl).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 when the recording has already been deleted after the retention window", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallSessionId: "sess_1" });
+      getRecordingDownloadUrl.mockResolvedValue(null);
+
+      const res = await request(app).get("/api/calls/call_1/recording");
+
+      expect(res.status).toBe(404);
     });
   });
 
