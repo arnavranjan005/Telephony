@@ -2,6 +2,8 @@ import type {
   Appointment,
   AppointmentStatus,
   AppointmentWithLead,
+  BulkCreateLeadsInput,
+  BulkImportResult,
   Call,
   CallStatus,
   CallWithDetails,
@@ -69,6 +71,8 @@ export const apiClient = {
   getLead: (leadId: string) => apiFetch<{ lead: LeadWithDetails }>(`/api/leads/${leadId}`),
   createLead: (input: CreateLeadInput) =>
     apiFetch<{ lead: Lead }>("/api/leads", { method: "POST", body: JSON.stringify(input) }),
+  bulkImportLeads: (input: BulkCreateLeadsInput) =>
+    apiFetch<BulkImportResult>("/api/leads/bulk", { method: "POST", body: JSON.stringify(input) }),
   updateLead: (leadId: string, input: UpdateLeadInput) =>
     apiFetch<{ lead: Lead }>(`/api/leads/${leadId}`, { method: "PATCH", body: JSON.stringify(input) }),
   setLeadConsent: (leadId: string, input: SetLeadConsentInput) =>

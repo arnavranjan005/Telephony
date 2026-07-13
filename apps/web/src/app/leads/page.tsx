@@ -26,7 +26,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
+import { Plus, Upload, FileDown } from "lucide-react";
+import { parseLeadsCsv, LEAD_CSV_TEMPLATE, type CsvParseResult } from "@/lib/csv";
+import { BULK_IMPORT_MAX_ROWS } from "@telephony/shared-types";
 
 const STATUS_TABS: Array<LeadStatus | "ALL"> = ["ALL", "COLD", "WARM", "HOT"];
 
@@ -36,6 +38,7 @@ export default function LeadsPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const load = useCallback(() => {
     apiClient
@@ -65,14 +68,24 @@ export default function LeadsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Leads</h1>
           <p className="text-sm text-muted-foreground">Every contact tracked by the platform, with status and consent.</p>
         </div>
-        <CreateLeadDialog
-          open={createOpen}
-          onOpenChange={setCreateOpen}
-          onCreated={() => {
-            setCreateOpen(false);
-            load();
-          }}
-        />
+        <div className="flex items-center gap-2">
+          <ImportLeadsDialog
+            open={importOpen}
+            onOpenChange={setImportOpen}
+            onImported={() => {
+              setImportOpen(false);
+              load();
+            }}
+          />
+          <CreateLeadDialog
+            open={createOpen}
+            onOpenChange={setCreateOpen}
+            onCreated={() => {
+              setCreateOpen(false);
+              load();
+            }}
+          />
+        </div>
       </div>
 
       <Tabs value={filter} onValueChange={(value) => setFilter(value as LeadStatus | "ALL")}>
@@ -209,6 +222,230 @@ function CreateLeadDialog({
         <DialogFooter>
           <Button onClick={submit} disabled={submitting}>
             Create lead
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ImportLeadsDialog({
+  open,
+  onOpenChange,
+  onImported,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onImported: () => void;
+}) {
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [parsed, setParsed] = useState<CsvParseResult | null>(null);
+  const [consentGrantedAll, setConsentGrantedAll] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [dragging, setDragging] = useState(false);
+
+  function reset() {
+    setFileName(null);
+    setParsed(null);
+    setConsentGrantedAll(false);
+    setDragging(false);
+  }
+
+  function handleFile(file: File) {
+    setFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => setParsed(parseLeadsCsv(String(reader.result ?? "")));
+    reader.onerror = () => toast.error("Could not read that file");
+    reader.readAsText(file);
+  }
+
+  function downloadTemplate() {
+    const blob = new Blob([LEAD_CSV_TEMPLATE], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "leads-template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const validCount = parsed?.valid.length ?? 0;
+  const invalidCount = parsed?.invalid.length ?? 0;
+  const overLimit = validCount > BULK_IMPORT_MAX_ROWS;
+
+  async function submit() {
+    if (!parsed || validCount === 0) {
+      toast.error("No valid rows to import");
+      return;
+    }
+    if (overLimit) {
+      toast.error(`Too many rows: ${validCount}. The limit is ${BULK_IMPORT_MAX_ROWS} per import.`);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const result = await apiClient.bulkImportLeads({
+        leads: parsed.valid.map((r) => r.lead),
+        consentGrantedAll: consentGrantedAll || undefined,
+      });
+      const parts = [`${result.created} imported`];
+      const skipped = result.skippedDuplicates + result.duplicatesInFile;
+      if (skipped > 0) parts.push(`${skipped} duplicate${skipped === 1 ? "" : "s"} skipped`);
+      if (invalidCount > 0) parts.push(`${invalidCount} invalid row${invalidCount === 1 ? "" : "s"} ignored`);
+      toast.success(parts.join(", "));
+      reset();
+      onImported();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to import leads");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) reset();
+        onOpenChange(next);
+      }}
+    >
+      <DialogTrigger render={<Button variant="outline" />}>
+        <Upload /> Import CSV
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Import leads from CSV</DialogTitle>
+          <DialogDescription>
+            Upload a CSV with a <span className="font-mono text-xs">phoneNumber</span> column. Optional columns:
+            firstName, lastName, email, status, notes.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-4">
+          {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
+          <label
+            className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed p-6 text-center transition-colors ${
+              dragging ? "border-primary bg-accent" : "hover:bg-accent/50"
+            }`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragging(false);
+              const file = e.dataTransfer.files[0];
+              if (file) handleFile(file);
+            }}
+          >
+            <Upload className="size-5 text-muted-foreground" />
+            <div className="text-sm">
+              {fileName ? (
+                <span className="font-medium">{fileName}</span>
+              ) : (
+                <>
+                  <span className="font-medium text-primary">Choose a file</span>
+                  <span className="text-muted-foreground"> or drag it here</span>
+                </>
+              )}
+            </div>
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleFile(file);
+              }}
+            />
+          </label>
+
+          <button
+            type="button"
+            onClick={downloadTemplate}
+            className="flex items-center gap-1.5 self-start text-xs text-muted-foreground hover:text-foreground"
+          >
+            <FileDown className="size-3.5" /> Download template
+          </button>
+
+          {parsed && (
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="rounded-md bg-accent px-2 py-0.5 font-medium">{validCount} valid</span>
+                {invalidCount > 0 && (
+                  <span className="rounded-md bg-destructive/10 px-2 py-0.5 font-medium text-destructive">
+                    {invalidCount} invalid
+                  </span>
+                )}
+              </div>
+
+              {overLimit && (
+                <p className="text-sm text-destructive">
+                  {validCount} rows exceeds the {BULK_IMPORT_MAX_ROWS}-row limit. Split the file and import in batches.
+                </p>
+              )}
+
+              {validCount > 0 && (
+                <div className="max-h-48 overflow-auto rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Phone</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {parsed.valid.slice(0, 20).map((r) => (
+                        <TableRow key={r.line}>
+                          <TableCell className="font-medium">
+                            {[r.lead.firstName, r.lead.lastName].filter(Boolean).join(" ") || "—"}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">{r.lead.phoneNumber}</TableCell>
+                          <TableCell>{r.lead.status ?? "COLD"}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                  {validCount > 20 && (
+                    <p className="border-t px-3 py-2 text-xs text-muted-foreground">…and {validCount - 20} more</p>
+                  )}
+                </div>
+              )}
+
+              {invalidCount > 0 && (
+                <details className="text-xs text-muted-foreground">
+                  <summary className="cursor-pointer">{invalidCount} rows will be skipped</summary>
+                  <ul className="mt-1.5 flex flex-col gap-0.5 pl-4">
+                    {parsed.invalid.slice(0, 10).map((row) => (
+                      <li key={row.line} className="list-disc">
+                        Line {row.line}: {row.reason}
+                      </li>
+                    ))}
+                    {invalidCount > 10 && <li className="list-disc">…and {invalidCount - 10} more</li>}
+                  </ul>
+                </details>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <div>
+              <p className="text-sm font-medium">Grant TCPA consent to all imported leads</p>
+              <p className="text-xs text-muted-foreground">
+                Marks every lead in this file as consented, so they can be dialed automatically
+              </p>
+            </div>
+            <Switch checked={consentGrantedAll} onCheckedChange={setConsentGrantedAll} />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button onClick={submit} disabled={submitting || validCount === 0 || overLimit}>
+            {validCount > 0 ? `Import ${Math.min(validCount, BULK_IMPORT_MAX_ROWS)} leads` : "Import leads"}
           </Button>
         </DialogFooter>
       </DialogContent>
