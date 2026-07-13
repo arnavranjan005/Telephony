@@ -64,6 +64,7 @@ jest.mock("../../src/callConversationService", () => ({
 
 import request from "supertest";
 import { createApp } from "../../src/app";
+import { callEventBus } from "../../src/sse/eventBus";
 
 const app = createApp();
 
@@ -195,9 +196,10 @@ describe("Call routes", () => {
   });
 
   describe("call.recording.saved", () => {
-    it("stores the call_session_id and a stable in-app recording URL, and schedules deletion", async () => {
+    it("stores the call_session_id and a stable in-app recording URL, schedules deletion, and notifies the dashboard", async () => {
       callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallControlId: "ctrl_1" });
       callUpdate.mockResolvedValue({ id: "call_1" });
+      const publishSpy = jest.spyOn(callEventBus, "publish");
 
       const res = await sendWebhook("call.recording.saved", {
         call_control_id: "ctrl_1",
@@ -216,6 +218,9 @@ describe("Call routes", () => {
         },
       });
       expect(enqueueRecordingDeletion).toHaveBeenCalledWith("call_1", 12);
+      // Live-update signal so an open call-detail sheet pulls in the player.
+      expect(publishSpy).toHaveBeenCalledWith("call_1", "call.recording.saved", { callId: "call_1" });
+      publishSpy.mockRestore();
     });
 
     it("does nothing when the recording webhook carries no call_session_id", async () => {

@@ -45,6 +45,11 @@ export default function CallsPage() {
     load();
   }, [load]);
 
+  const refreshDetail = useCallback(() => {
+    if (!selectedCallId) return;
+    apiClient.getCall(selectedCallId).then((data) => setDetail(data.call));
+  }, [selectedCallId]);
+
   useEventStream(
     useCallback(
       (event: DashboardEvent) => {
@@ -53,8 +58,14 @@ export default function CallsPage() {
         // the whole list for it would refetch on every utterance of every
         // live call for no visible change.
         if (event.type.startsWith("call.") && event.type !== "call.transcript") load();
+        // Live-refresh the open detail sheet when an event targets that call -
+        // e.g. call.recording.saved lands a few seconds after hangup, so the
+        // recording player appears without the user reopening the sheet.
+        if (event.callId && event.callId === selectedCallId && event.type !== "call.transcript") {
+          refreshDetail();
+        }
       },
-      [load]
+      [load, selectedCallId, refreshDetail]
     )
   );
 
@@ -68,11 +79,6 @@ export default function CallsPage() {
       .getCall(selectedCallId)
       .then((data) => setDetail(data.call))
       .finally(() => setDetailLoading(false));
-  }, [selectedCallId]);
-
-  const refreshDetail = useCallback(() => {
-    if (!selectedCallId) return;
-    apiClient.getCall(selectedCallId).then((data) => setDetail(data.call));
   }, [selectedCallId]);
 
   return (

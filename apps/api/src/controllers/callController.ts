@@ -242,6 +242,10 @@ export async function handleTelnyxWebhook(req: Request, res: Response) {
           // from Telnyx (which otherwise keeps it ~1 year) after
           // RECORDING_RETENTION_HOURS.
           await enqueueRecordingDeletion(call.id, env.RECORDING_RETENTION_HOURS);
+          // Recordings save a few seconds after hangup, so notify the dashboard
+          // to live-refresh: a call-detail view open at that moment can pull in
+          // the now-available player without a manual reopen.
+          callEventBus.publish(call.id, "call.recording.saved", { callId: call.id });
         }
         break;
       }
