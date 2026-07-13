@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import type { Campaign, CampaignWithContacts, DashboardEvent } from "@telephony/shared-types";
+import type { Campaign, CampaignWithContacts, DashboardEvent, Lead } from "@telephony/shared-types";
 import { apiClient } from "@/lib/apiClient";
 import { useEventStream } from "@/hooks/useEventStream";
 import { StatusBadge } from "@/components/status-badge";
@@ -23,7 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Plus, Play, Pause } from "lucide-react";
+import { Plus, Play, Pause, Check, Search } from "lucide-react";
 
 export default function CampaignsPage() {
   const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
@@ -152,14 +152,43 @@ function CreateCampaignDialog({
   const [submitting, setSubmitting] = useState(false);
   const [objectionBaseline, setObjectionBaseline] = useState<string | null>(null);
   const [openingLineDefault, setOpeningLineDefault] = useState<string | null>(null);
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [leadSearch, setLeadSearch] = useState("");
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     apiClient.getObjectionBaseline().then((data) => setObjectionBaseline(data.text));
     apiClient.getOpeningLineDefault().then((data) => setOpeningLineDefault(data.text));
   }, []);
 
+  // Load existing leads to pick from once the dialog opens, so a campaign can
+  // be built by selecting saved leads instead of retyping names and numbers.
+  useEffect(() => {
+    if (open && leads.length === 0) {
+      apiClient.listLeads({ limit: 200 }).then((data) => setLeads(data.leads)).catch(() => {});
+    }
+  }, [open, leads.length]);
+
+  function toggleLead(id: string) {
+    setSelectedLeadIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const filteredLeads = leads.filter((lead) => {
+    const q = leadSearch.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      [lead.firstName, lead.lastName].filter(Boolean).join(" ").toLowerCase().includes(q) ||
+      lead.phoneNumber.toLowerCase().includes(q)
+    );
+  });
+
   async function submit() {
-    const contacts = contactsText
+    const typedContacts = contactsText
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean)
@@ -171,6 +200,11 @@ function CreateCampaignDialog({
         }
         return { phoneNumber: maybeName };
       });
+
+    // Selected existing leads are sent by id (the API links them directly);
+    // typed lines are still supported for ad-hoc numbers not yet saved.
+    const selectedContacts = [...selectedLeadIds].map((leadId) => ({ leadId }));
+    const contacts = [...selectedContacts, ...typedContacts];
 
     if (!name.trim() || !script.trim() || contacts.length === 0) {
       toast.error("Campaign name, call script, and at least one contact are required");
@@ -192,6 +226,8 @@ function CreateCampaignDialog({
       setOpeningLine("");
       setObjectionPlaybook("");
       setContactsText("");
+      setSelectedLeadIds(new Set());
+      setLeadSearch("");
       onCreated();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create campaign");
@@ -256,11 +292,60 @@ function CreateCampaignDialog({
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label>Contacts</Label>
+            <div className="flex items-center justify-between">
+              <Label>Select leads</Label>
+              {selectedLeadIds.size > 0 && (
+                <span className="text-xs text-muted-foreground">{selectedLeadIds.size} selected</span>
+              )}
+            </div>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-8"
+                value={leadSearch}
+                onChange={(e) => setLeadSearch(e.target.value)}
+                placeholder="Search leads by name or number"
+              />
+            </div>
+            <div className="max-h-44 overflow-y-auto rounded-md border">
+              {filteredLeads.length === 0 ? (
+                <p className="px-3 py-4 text-center text-xs text-muted-foreground">
+                  {leads.length === 0 ? "No leads yet — add contacts below." : "No leads match that search."}
+                </p>
+              ) : (
+                filteredLeads.map((lead) => {
+                  const selected = selectedLeadIds.has(lead.id);
+                  return (
+                    <button
+                      type="button"
+                      key={lead.id}
+                      onClick={() => toggleLead(lead.id)}
+                      className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+                    >
+                      <span className="min-w-0 flex-1 truncate">
+                        {[lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.phoneNumber}
+                        <span className="ml-2 font-mono text-xs text-muted-foreground">{lead.phoneNumber}</span>
+                      </span>
+                      <span
+                        className={`flex size-4 shrink-0 items-center justify-center rounded border ${
+                          selected ? "border-primary bg-primary text-primary-foreground" : "border-input"
+                        }`}
+                      >
+                        {selected && <Check className="size-3" />}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label>Or add numbers manually</Label>
             <Textarea
               value={contactsText}
               onChange={(e) => setContactsText(e.target.value)}
-              rows={5}
+              rows={3}
               placeholder={"One per line: Name, +15551234567\nor just +15551234567"}
             />
           </div>

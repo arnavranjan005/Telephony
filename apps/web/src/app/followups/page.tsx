@@ -138,7 +138,7 @@ function CreateFollowUpDialog({
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (open) apiClient.listLeads().then((data) => setLeads(data.leads));
+    if (open) apiClient.listLeads({ limit: 200 }).then((data) => setLeads(data.leads));
   }, [open]);
 
   async function submit() {
