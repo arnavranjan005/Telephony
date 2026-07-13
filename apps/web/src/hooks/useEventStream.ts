@@ -47,6 +47,7 @@ export function useEventStream(onEvent?: (event: DashboardEvent) => void) {
       "conversation.message",
       "lead.created",
       "lead.updated",
+      "lead.bulk_imported",
       "campaign.created",
       "campaign.updated",
       "appointment.created",

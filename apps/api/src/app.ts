@@ -26,8 +26,13 @@ export function createApp() {
 
   // Capture the raw body so Telnyx webhook signatures can be verified exactly
   // as received, before JSON parsing normalizes it.
+  //
+  // The default body limit is 100 KB; raised to 2 MB so a full bulk lead
+  // import (POST /api/leads/bulk, capped at BULK_IMPORT_MAX_ROWS) isn't
+  // rejected as a payload-too-large before it reaches the handler.
   app.use(
     express.json({
+      limit: "2mb",
       verify: (req: Request & { rawBody?: string }, _res, buf) => {
         req.rawBody = buf.toString("utf-8");
       },

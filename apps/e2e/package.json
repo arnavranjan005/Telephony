@@ -4,13 +4,14 @@
   "private": true,
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "e2e": "jest --runInBand"
+    "e2e": "jest --runInBand --forceExit"
   },
   "dependencies": {
     "@telephony/config": "*",
     "@telephony/database": "*",
     "@telephony/domain": "*",
     "@telephony/queue": "*",
+    "@telephony/shared-types": "*",
     "bullmq": "^5.28.1"
   },
   "devDependencies": {
