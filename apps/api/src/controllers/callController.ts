@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import { Readable } from "node:stream";
 import { z } from "zod";
 import { env } from "@telephony/config";
 import { prisma, CallStatus, CallDirection } from "@telephony/database";
@@ -70,11 +71,15 @@ export async function getCall(req: Request, res: Response) {
 }
 
 /**
- * Redirects to a freshly-minted Telnyx download URL for the call's recording.
- * The raw Telnyx URLs expire in ~10 minutes, so rather than persist one we
- * mint a new one per request from the stored call_session_id. Returns 404 if
- * the call has no recording, or if it's already been deleted after the
- * retention window elapsed.
+ * Streams the call's recording audio through the API. We mint a fresh Telnyx
+ * download URL per request (from the stored call_session_id, since the raw
+ * URLs expire in ~10 minutes) and proxy the bytes, rather than redirecting to
+ * Telnyx directly: Telnyx's signed URLs are cross-origin and send no CORS
+ * headers, so a browser <audio> element can't reliably follow a redirect to
+ * them for its range requests. Proxying keeps the media same-origin and
+ * forwards HTTP Range so seeking works. Add ?download=1 to force a file
+ * download instead of inline playback. Returns 404 if the call has no
+ * recording, or if it's already been deleted after the retention window.
  */
 export async function getCallRecording(req: Request, res: Response) {
   const call = await prisma.call.findUnique({
@@ -90,7 +95,29 @@ export async function getCallRecording(req: Request, res: Response) {
   if (!downloadUrl) {
     return res.status(404).json({ error: "Recording is no longer available" });
   }
-  res.redirect(302, downloadUrl);
+
+  const range = req.header("range");
+  const upstream = await fetch(downloadUrl, { headers: range ? { Range: range } : {} });
+  if (!upstream.ok) {
+    return res.status(502).json({ error: "Failed to fetch recording from Telnyx" });
+  }
+
+  res.status(upstream.status); // 206 when a Range was served, else 200
+  res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "audio/mpeg");
+  res.setHeader("Accept-Ranges", "bytes");
+  // The admin panel is served from a different origin than this API, so
+  // helmet's default Cross-Origin-Resource-Policy: same-origin would block a
+  // browser <audio>/<a download> from loading this response. Allow it.
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  for (const header of ["content-length", "content-range"]) {
+    const value = upstream.headers.get(header);
+    if (value) res.setHeader(header, value);
+  }
+  const disposition = req.query.download !== undefined ? "attachment" : "inline";
+  res.setHeader("Content-Disposition", `${disposition}; filename="call-${call.id}.mp3"`);
+
+  if (!upstream.body) return res.end();
+  Readable.fromWeb(upstream.body as Parameters<typeof Readable.fromWeb>[0]).pipe(res);
 }
 
 type TelnyxWebhookPayload = {
@@ -208,7 +235,7 @@ export async function handleTelnyxWebhook(req: Request, res: Response) {
             where: { id: call.id },
             data: {
               telnyxCallSessionId: callSessionId,
-              recordingUrl: `${env.BASE_URL}/calls/${call.id}/recording`,
+              recordingUrl: `${env.BASE_URL}/api/calls/${call.id}/recording`,
             },
           });
           // Enforce the retention window: schedule the recording's deletion

@@ -12,7 +12,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { ArrowDownLeft, ArrowUpRight } from "lucide-react";
+import { buttonVariants } from "@/components/ui/button";
+import { ArrowDownLeft, ArrowUpRight, Download, Mic } from "lucide-react";
 
 function LiveDuration({ startedAt }: { startedAt: string | null }) {
   const elapsed = useElapsedSeconds(startedAt);
@@ -160,6 +161,27 @@ export default function CallsPage() {
                   )}
                   {detail.outcome && <span className="text-muted-foreground">· {detail.outcome}</span>}
                 </div>
+
+                {detail.recordingUrl && (
+                  <div className="rounded-md border p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <p className="flex items-center gap-1.5 text-sm font-medium">
+                        <Mic className="size-3.5 text-muted-foreground" /> Recording
+                      </p>
+                      <a
+                        href={apiClient.recordingHref(detail.id, { download: true })}
+                        className={buttonVariants({ variant: "outline", size: "xs" })}
+                      >
+                        <Download /> Download
+                      </a>
+                    </div>
+                    {/* Native player; API streams a fresh Telnyx recording per request. */}
+                    {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                    <audio controls preload="none" className="h-9 w-full" src={apiClient.recordingHref(detail.id)}>
+                      Your browser does not support audio playback.
+                    </audio>
+                  </div>
+                )}
 
                 {detail.appointments.length > 0 && (
                   <div className="rounded-md border p-3 text-sm">

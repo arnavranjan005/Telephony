@@ -212,7 +212,7 @@ describe("Call routes", () => {
         where: { id: "call_1" },
         data: {
           telnyxCallSessionId: "sess_1",
-          recordingUrl: "http://localhost:3000/calls/call_1/recording",
+          recordingUrl: "http://localhost:3000/api/calls/call_1/recording",
         },
       });
       expect(enqueueRecordingDeletion).toHaveBeenCalledWith("call_1", 12);
@@ -229,21 +229,89 @@ describe("Call routes", () => {
   });
 
   describe("GET /api/calls/:callId/recording", () => {
-    it("redirects to a freshly minted Telnyx download URL", async () => {
+    const originalFetch = global.fetch;
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    it("streams the recording audio proxied from a freshly minted Telnyx URL", async () => {
       callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallSessionId: "sess_1" });
       getRecordingDownloadUrl.mockResolvedValue("https://fresh.telnyx.example/rec.mp3");
+      const fetchMock = jest
+        .fn()
+        .mockResolvedValue(new Response(Buffer.from("ID3-fake-mp3-bytes"), {
+          status: 200,
+          headers: { "content-type": "audio/mpeg", "content-length": "18" },
+        }));
+      global.fetch = fetchMock as unknown as typeof fetch;
 
-      const res = await request(app).get("/api/calls/call_1/recording").redirects(0);
+      const res = await request(app).get("/api/calls/call_1/recording");
 
-      expect(res.status).toBe(302);
-      expect(res.headers.location).toBe("https://fresh.telnyx.example/rec.mp3");
+      expect(res.status).toBe(200);
       expect(getRecordingDownloadUrl).toHaveBeenCalledWith("sess_1");
+      expect(fetchMock).toHaveBeenCalledWith("https://fresh.telnyx.example/rec.mp3", { headers: {} });
+      expect(res.headers["content-type"]).toContain("audio/mpeg");
+      expect(res.headers["content-disposition"]).toContain("inline");
+      // Must be embeddable cross-origin (admin panel != API origin), overriding
+      // helmet's default same-origin CORP.
+      expect(res.headers["cross-origin-resource-policy"]).toBe("cross-origin");
+      expect(res.body).toBeInstanceOf(Buffer);
+      expect(res.body.toString()).toBe("ID3-fake-mp3-bytes");
+    });
+
+    it("forwards the client's Range header and returns 206 for partial content", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallSessionId: "sess_1" });
+      getRecordingDownloadUrl.mockResolvedValue("https://fresh.telnyx.example/rec.mp3");
+      const fetchMock = jest.fn().mockResolvedValue(
+        new Response(Buffer.from("mp3"), {
+          status: 206,
+          headers: { "content-type": "audio/mpeg", "content-range": "bytes 0-2/18", "content-length": "3" },
+        })
+      );
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const res = await request(app).get("/api/calls/call_1/recording").set("Range", "bytes=0-2");
+
+      expect(res.status).toBe(206);
+      expect(fetchMock).toHaveBeenCalledWith("https://fresh.telnyx.example/rec.mp3", {
+        headers: { Range: "bytes=0-2" },
+      });
+      expect(res.headers["content-range"]).toBe("bytes 0-2/18");
+    });
+
+    it("forces a download (attachment) when ?download is present", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallSessionId: "sess_1" });
+      getRecordingDownloadUrl.mockResolvedValue("https://fresh.telnyx.example/rec.mp3");
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue(new Response(Buffer.from("mp3"), {
+          status: 200,
+          headers: { "content-type": "audio/mpeg" },
+        })) as unknown as typeof fetch;
+
+      const res = await request(app).get("/api/calls/call_1/recording?download=1");
+
+      expect(res.status).toBe(200);
+      expect(res.headers["content-disposition"]).toContain("attachment");
+      expect(res.headers["content-disposition"]).toContain('filename="call-call_1.mp3"');
+    });
+
+    it("returns 502 when Telnyx fails to serve the recording", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallSessionId: "sess_1" });
+      getRecordingDownloadUrl.mockResolvedValue("https://fresh.telnyx.example/rec.mp3");
+      global.fetch = jest
+        .fn()
+        .mockResolvedValue(new Response("nope", { status: 403 })) as unknown as typeof fetch;
+
+      const res = await request(app).get("/api/calls/call_1/recording");
+
+      expect(res.status).toBe(502);
     });
 
     it("returns 404 when the call has no recording", async () => {
       callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallSessionId: null });
 
-      const res = await request(app).get("/api/calls/call_1/recording").redirects(0);
+      const res = await request(app).get("/api/calls/call_1/recording");
 
       expect(res.status).toBe(404);
       expect(getRecordingDownloadUrl).not.toHaveBeenCalled();
@@ -253,7 +321,7 @@ describe("Call routes", () => {
       callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallSessionId: "sess_1" });
       getRecordingDownloadUrl.mockResolvedValue(null);
 
-      const res = await request(app).get("/api/calls/call_1/recording").redirects(0);
+      const res = await request(app).get("/api/calls/call_1/recording");
 
       expect(res.status).toBe(404);
     });

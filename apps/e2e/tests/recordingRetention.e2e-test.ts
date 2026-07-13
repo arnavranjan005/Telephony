@@ -35,9 +35,17 @@ import { startRecordingCleanupWorker } from "../../worker/src/worker";
 import { prisma, CallDirection, CallStatus } from "@telephony/database";
 import { recordingCleanupQueue, recordingDeletionJobId } from "@telephony/queue";
 import { processRecordingDeletion } from "@telephony/domain";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 
 const app = createApp();
 let worker: Worker;
+
+// A tiny local "recording CDN" the API's proxy fetches from (stands in for
+// Telnyx's real download URL, which the mocked SDK points here).
+const AUDIO_BYTES = Buffer.from("ID3-e2e-fake-mp3-audio-bytes");
+let audioServer: http.Server;
+let audioUrl: string;
 
 async function flushWebhook() {
   // The webhook endpoint acks 200 before processing; give the async handler a
@@ -48,6 +56,12 @@ async function flushWebhook() {
 beforeAll(async () => {
   worker = startRecordingCleanupWorker();
   await worker.waitUntilReady();
+  audioServer = http.createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "audio/mpeg", "content-length": AUDIO_BYTES.length });
+    res.end(AUDIO_BYTES);
+  });
+  await new Promise<void>((resolve) => audioServer.listen(0, resolve));
+  audioUrl = `http://127.0.0.1:${(audioServer.address() as AddressInfo).port}/rec.mp3`;
 });
 
 afterAll(async () => {
@@ -57,6 +71,7 @@ afterAll(async () => {
   // into another file's run.
   await recordingCleanupQueue.obliterate({ force: true });
   await recordingCleanupQueue.close();
+  await new Promise<void>((resolve) => audioServer.close(() => resolve()));
   await prisma.$disconnect();
 });
 
@@ -109,7 +124,7 @@ describe("recording retention e2e (real Postgres + Redis)", () => {
     const updated = await prisma.call.findUniqueOrThrow({ where: { id: call.id } });
     expect(updated.telnyxCallSessionId).toBe("rec-e2e-session");
     // We store a stable in-app link, never the ~10-min signed Telnyx URL.
-    expect(updated.recordingUrl).toContain(`/calls/${call.id}/recording`);
+    expect(updated.recordingUrl).toContain(`/api/calls/${call.id}/recording`);
     expect(updated.recordingUrl).not.toContain("signed.telnyx.example");
 
     // A real delayed job now sits in Redis, keyed deterministically, due after
@@ -120,7 +135,7 @@ describe("recording retention e2e (real Postgres + Redis)", () => {
     expect(job?.delay).toBe(12 * 60 * 60 * 1000);
   });
 
-  it("serves a freshly-minted Telnyx download URL via GET /api/calls/:id/recording", async () => {
+  it("streams the recording audio (proxied from Telnyx) via GET /api/calls/:id/recording", async () => {
     const call = await prisma.call.create({
       data: {
         telnyxCallControlId: "rec-e2e-ctrl",
@@ -131,12 +146,16 @@ describe("recording retention e2e (real Postgres + Redis)", () => {
         telnyxCallSessionId: "rec-e2e-session",
       },
     });
-    recordingsListResult = [{ id: "rec_1", download_urls: { mp3: "https://fresh.telnyx.example/rec.mp3" } }];
+    // Point Telnyx's download URL at a local audio fixture so the proxy has
+    // something real to stream back.
+    recordingsListResult = [{ id: "rec_1", download_urls: { mp3: audioUrl } }];
 
-    const res = await request(app).get(`/api/calls/${call.id}/recording`).redirects(0);
+    const res = await request(app).get(`/api/calls/${call.id}/recording`);
 
-    expect(res.status).toBe(302);
-    expect(res.headers.location).toBe("https://fresh.telnyx.example/rec.mp3");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("audio/");
+    expect(res.headers["content-disposition"]).toContain("inline");
+    expect(res.body.length).toBe(AUDIO_BYTES.length);
   });
 
   it("returns 404 for a call that has no recording", async () => {
