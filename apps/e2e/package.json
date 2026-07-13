@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "e2e": "jest --runInBand"
+    "e2e": "jest --runInBand --forceExit"
   },
   "dependencies": {
     "@telephony/config": "*",

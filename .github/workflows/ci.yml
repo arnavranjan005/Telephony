@@ -8,6 +8,7 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     # Dummy connection strings: prisma generate only reads the schema file
     # (it doesn't connect), and the Jest suite mocks Prisma/Redis/Telnyx/Google
@@ -47,6 +48,11 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    # Safety net: the suite runs in ~30s. Without this a hung run (e.g. a Jest
+    # process that finishes its tests but never exits) would spin the runner
+    # until the 6h default. --forceExit on the e2e script is the real guard;
+    # this just bounds the worst case.
+    timeout-minutes: 15
 
     services:
       postgres:

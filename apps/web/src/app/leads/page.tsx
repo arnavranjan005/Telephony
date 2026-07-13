@@ -253,9 +253,17 @@ function ImportLeadsDialog({
 
   function handleFile(file: File) {
     setFileName(file.name);
+    // Clear any previously parsed rows up front: FileReader.onload is async, so
+    // until it fires (or permanently, if the read errors) a stale `parsed` from
+    // the prior file would otherwise keep the preview and Import button live -
+    // letting a quick click submit the wrong file's rows under the new name.
+    setParsed(null);
     const reader = new FileReader();
     reader.onload = () => setParsed(parseLeadsCsv(String(reader.result ?? "")));
-    reader.onerror = () => toast.error("Could not read that file");
+    reader.onerror = () => {
+      setFileName(null);
+      toast.error("Could not read that file");
+    };
     reader.readAsText(file);
   }
 
