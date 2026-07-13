@@ -74,8 +74,10 @@ export const apiClient = {
     apiFetch<{ call: Call }>("/api/calls/outbound", { method: "POST", body: JSON.stringify(input) }),
 
   // Leads
-  listLeads: (params?: { status?: LeadStatus; cursor?: string; limit?: number }) =>
-    apiFetch<LeadsPage>(`/api/leads${query({ status: params?.status, cursor: params?.cursor, limit: params?.limit })}`),
+  listLeads: (params?: { status?: LeadStatus; cursor?: string; limit?: number; search?: string }) =>
+    apiFetch<LeadsPage>(
+      `/api/leads${query({ status: params?.status, cursor: params?.cursor, limit: params?.limit, search: params?.search })}`
+    ),
   getLead: (leadId: string) => apiFetch<{ lead: LeadWithDetails }>(`/api/leads/${leadId}`),
   createLead: (input: CreateLeadInput) =>
     apiFetch<{ lead: Lead }>("/api/leads", { method: "POST", body: JSON.stringify(input) }),
