@@ -45,16 +45,40 @@ export default function LeadsPage() {
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
+  const status = filter === "ALL" ? undefined : filter;
+
+  // Loads the first page (resetting any accumulated pages). Called on mount,
+  // on filter change, and whenever a lead.* SSE event lands - new leads sort to
+  // the top, so restarting from page one is the correct refresh.
   const load = useCallback(() => {
     apiClient
-      .listLeads(filter === "ALL" ? undefined : filter)
-      .then((data) => setLeads(data.leads))
+      .listLeads({ status })
+      .then((data) => {
+        setLeads(data.leads);
+        setNextCursor(data.nextCursor);
+      })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [filter]);
+  }, [status]);
+
+  const loadMore = useCallback(() => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    apiClient
+      .listLeads({ status, cursor: nextCursor })
+      .then((data) => {
+        setLeads((prev) => [...(prev ?? []), ...data.leads]);
+        setNextCursor(data.nextCursor);
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoadingMore(false));
+  }, [status, nextCursor, loadingMore]);
 
   useEffect(() => {
     setLeads(null);
+    setNextCursor(null);
     load();
   }, [load]);
 
@@ -139,6 +163,14 @@ export default function LeadsPage() {
             ))}
           </TableBody>
         </Table>
+      )}
+
+      {leads && leads.length > 0 && nextCursor && (
+        <div className="flex justify-center">
+          <Button variant="outline" onClick={loadMore} disabled={loadingMore}>
+            {loadingMore ? "Loading…" : "Load more"}
+          </Button>
+        </div>
       )}
 
       <LeadDetailSheet leadId={selectedLeadId} onClose={() => setSelectedLeadId(null)} onChanged={load} />

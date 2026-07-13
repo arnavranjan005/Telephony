@@ -28,6 +28,17 @@ export interface LeadWithDetails extends Lead {
   appointments: Appointment[];
 }
 
+/** One page of leads. `nextCursor` is the id to pass as `cursor` on the next
+ * request; null means there are no more rows. */
+export interface LeadsPage {
+  leads: Lead[];
+  nextCursor: string | null;
+}
+
+/** Default/max page sizes for the cursor-paginated leads list. */
+export const LEADS_PAGE_SIZE = 50;
+export const LEADS_PAGE_SIZE_MAX = 200;
+
 export const createLeadSchema = z.object({
   firstName: z.string().optional(),
   lastName: z.string().optional(),

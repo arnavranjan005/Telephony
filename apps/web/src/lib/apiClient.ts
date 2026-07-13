@@ -19,6 +19,7 @@ import type {
   FollowUpStatus,
   FollowUpWithLead,
   Lead,
+  LeadsPage,
   LeadStatus,
   LeadWithDetails,
   OverviewStats,
@@ -73,7 +74,8 @@ export const apiClient = {
     apiFetch<{ call: Call }>("/api/calls/outbound", { method: "POST", body: JSON.stringify(input) }),
 
   // Leads
-  listLeads: (status?: LeadStatus) => apiFetch<{ leads: Lead[] }>(`/api/leads${query({ status })}`),
+  listLeads: (params?: { status?: LeadStatus; cursor?: string; limit?: number }) =>
+    apiFetch<LeadsPage>(`/api/leads${query({ status: params?.status, cursor: params?.cursor, limit: params?.limit })}`),
   getLead: (leadId: string) => apiFetch<{ lead: LeadWithDetails }>(`/api/leads/${leadId}`),
   createLead: (input: CreateLeadInput) =>
     apiFetch<{ lead: Lead }>("/api/leads", { method: "POST", body: JSON.stringify(input) }),
