@@ -12,7 +12,9 @@ import {
   buildStreamUrl,
   hangupCall,
   startRecording,
+  getRecordingDownloadUrl,
 } from "@telephony/domain";
+import { enqueueRecordingDeletion } from "@telephony/queue";
 import { verifyTelnyxSignature } from "../telnyx/webhookVerifier";
 import { handleCallerUtterance } from "../callConversationService";
 import { callEventBus } from "../sse/eventBus";
@@ -67,11 +69,36 @@ export async function getCall(req: Request, res: Response) {
   res.json({ call });
 }
 
+/**
+ * Redirects to a freshly-minted Telnyx download URL for the call's recording.
+ * The raw Telnyx URLs expire in ~10 minutes, so rather than persist one we
+ * mint a new one per request from the stored call_session_id. Returns 404 if
+ * the call has no recording, or if it's already been deleted after the
+ * retention window elapsed.
+ */
+export async function getCallRecording(req: Request, res: Response) {
+  const call = await prisma.call.findUnique({
+    where: { id: req.params.callId },
+    select: { id: true, telnyxCallSessionId: true },
+  });
+  if (!call) return res.status(404).json({ error: "Call not found" });
+  if (!call.telnyxCallSessionId) {
+    return res.status(404).json({ error: "No recording available for this call" });
+  }
+
+  const downloadUrl = await getRecordingDownloadUrl(call.telnyxCallSessionId);
+  if (!downloadUrl) {
+    return res.status(404).json({ error: "Recording is no longer available" });
+  }
+  res.redirect(302, downloadUrl);
+}
+
 type TelnyxWebhookPayload = {
   data?: {
     event_type?: string;
     payload?: {
       call_control_id?: string;
+      call_session_id?: string;
       client_state?: string;
       from?: string;
       to?: string;
@@ -171,9 +198,23 @@ export async function handleTelnyxWebhook(req: Request, res: Response) {
 
       case "call.recording.saved": {
         const call = await prisma.call.findUnique({ where: { telnyxCallControlId: callControlId } });
-        const recordingUrl = payload.recording_urls?.mp3;
-        if (call && recordingUrl) {
-          await prisma.call.update({ where: { id: call.id }, data: { recordingUrl } });
+        // The webhook's own recording_urls are signed links that expire in ~10
+        // minutes, so we don't persist them. Instead we keep call_session_id
+        // (the durable handle) and expose a stable in-app URL that mints a
+        // fresh Telnyx download link on each request (see getCallRecording).
+        const callSessionId = payload.call_session_id;
+        if (call && callSessionId) {
+          await prisma.call.update({
+            where: { id: call.id },
+            data: {
+              telnyxCallSessionId: callSessionId,
+              recordingUrl: `${env.BASE_URL}/calls/${call.id}/recording`,
+            },
+          });
+          // Enforce the retention window: schedule the recording's deletion
+          // from Telnyx (which otherwise keeps it ~1 year) after
+          // RECORDING_RETENTION_HOURS.
+          await enqueueRecordingDeletion(call.id, env.RECORDING_RETENTION_HOURS);
         }
         break;
       }

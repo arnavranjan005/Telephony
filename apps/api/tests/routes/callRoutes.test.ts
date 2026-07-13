@@ -28,6 +28,7 @@ const speakText = jest.fn();
 const startTranscription = jest.fn();
 const finalizeDialOutcome = jest.fn();
 const startRecording = jest.fn();
+const getRecordingDownloadUrl = jest.fn();
 
 jest.mock("@telephony/domain", () => ({
   placeOutboundCall: (...args: unknown[]) => placeOutboundCall(...args),
@@ -36,6 +37,7 @@ jest.mock("@telephony/domain", () => ({
   startTranscription: (...args: unknown[]) => startTranscription(...args),
   finalizeDialOutcome: (...args: unknown[]) => finalizeDialOutcome(...args),
   startRecording: (...args: unknown[]) => startRecording(...args),
+  getRecordingDownloadUrl: (...args: unknown[]) => getRecordingDownloadUrl(...args),
   decodeClientState: (clientState?: string) => {
     if (!clientState) return {};
     try {
@@ -44,6 +46,11 @@ jest.mock("@telephony/domain", () => ({
       return {};
     }
   },
+}));
+
+const enqueueRecordingDeletion = jest.fn();
+jest.mock("@telephony/queue", () => ({
+  enqueueRecordingDeletion: (...args: unknown[]) => enqueueRecordingDeletion(...args),
 }));
 
 const verifyTelnyxSignature = jest.fn();
@@ -184,6 +191,71 @@ describe("Call routes", () => {
       await sendWebhook("call.answered", { call_control_id: "ctrl_1" });
 
       expect(startRecording).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("call.recording.saved", () => {
+    it("stores the call_session_id and a stable in-app recording URL, and schedules deletion", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallControlId: "ctrl_1" });
+      callUpdate.mockResolvedValue({ id: "call_1" });
+
+      const res = await sendWebhook("call.recording.saved", {
+        call_control_id: "ctrl_1",
+        call_session_id: "sess_1",
+        // The signed recording_urls Telnyx sends expire in ~10 min - we
+        // deliberately don't persist them.
+        recording_urls: { mp3: "https://signed.telnyx.example/rec.mp3?expires=soon" },
+      });
+
+      expect(res.status).toBe(200);
+      expect(callUpdate).toHaveBeenCalledWith({
+        where: { id: "call_1" },
+        data: {
+          telnyxCallSessionId: "sess_1",
+          recordingUrl: "http://localhost:3000/calls/call_1/recording",
+        },
+      });
+      expect(enqueueRecordingDeletion).toHaveBeenCalledWith("call_1", 12);
+    });
+
+    it("does nothing when the recording webhook carries no call_session_id", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallControlId: "ctrl_1" });
+
+      await sendWebhook("call.recording.saved", { call_control_id: "ctrl_1" });
+
+      expect(callUpdate).not.toHaveBeenCalled();
+      expect(enqueueRecordingDeletion).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("GET /api/calls/:callId/recording", () => {
+    it("redirects to a freshly minted Telnyx download URL", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallSessionId: "sess_1" });
+      getRecordingDownloadUrl.mockResolvedValue("https://fresh.telnyx.example/rec.mp3");
+
+      const res = await request(app).get("/api/calls/call_1/recording").redirects(0);
+
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toBe("https://fresh.telnyx.example/rec.mp3");
+      expect(getRecordingDownloadUrl).toHaveBeenCalledWith("sess_1");
+    });
+
+    it("returns 404 when the call has no recording", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallSessionId: null });
+
+      const res = await request(app).get("/api/calls/call_1/recording").redirects(0);
+
+      expect(res.status).toBe(404);
+      expect(getRecordingDownloadUrl).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 when the recording has already been deleted after the retention window", async () => {
+      callFindUnique.mockResolvedValue({ id: "call_1", telnyxCallSessionId: "sess_1" });
+      getRecordingDownloadUrl.mockResolvedValue(null);
+
+      const res = await request(app).get("/api/calls/call_1/recording").redirects(0);
+
+      expect(res.status).toBe(404);
     });
   });
 

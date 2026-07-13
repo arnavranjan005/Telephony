@@ -120,7 +120,15 @@ model Call {
   endedAt           DateTime?
   durationSeconds   Int?
   outcome           String?
+  // Stable in-app link (BASE_URL + /calls/:id/recording) that redirects to a
+  // freshly-minted Telnyx download URL on each request. Not the raw Telnyx
+  // URL, which is a signed link valid only ~10 minutes. Null once the
+  // retention window elapses and the recording is deleted from Telnyx.
   recordingUrl      String?
+  // Telnyx call_session_id, captured from the call.recording.saved webhook.
+  // The recording itself lives on Telnyx (not stored by us); this correlates
+  // our Call to it so we can list/fetch/delete it via the Recordings API.
+  telnyxCallSessionId String?
   streamingEnabled  Boolean       @default(true)
   endCallRequested  Boolean       @default(false)
 

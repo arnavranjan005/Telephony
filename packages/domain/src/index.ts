@@ -44,6 +44,10 @@ export {
   startTranscription,
   hangupCall,
   startRecording,
+  getRecordingDownloadUrl,
+  deleteRecordingsForSession,
   decodeClientState,
 } from "./telnyx/callService";
 export type { StreamingOptions } from "./telnyx/callService";
+
+export { processRecordingDeletion } from "./recordingService";
