@@ -11,6 +11,7 @@ const EVENT_META: Record<string, { icon: typeof Phone; label: string; color: str
   "call.hangup": { icon: Phone, label: "Call ended", color: "text-muted-foreground" },
   "lead.created": { icon: UserPlus, label: "New lead", color: "text-sky-500" },
   "lead.updated": { icon: UserPlus, label: "Lead updated", color: "text-sky-500" },
+  "lead.bulk_imported": { icon: UserPlus, label: "Leads imported", color: "text-sky-500" },
   "campaign.created": { icon: Megaphone, label: "Campaign created", color: "text-violet-500" },
   "campaign.updated": { icon: Megaphone, label: "Campaign updated", color: "text-violet-500" },
   "appointment.created": { icon: CalendarCheck, label: "Appointment booked", color: "text-emerald-500" },
@@ -32,6 +33,11 @@ function describe(event: DashboardEvent): string {
   const followUp = data.followUp as { scheduledAt?: string } | undefined;
   const entry = data.entry as { phoneNumber?: string } | undefined;
 
+  if (typeof data.created === "number") {
+    // Bulk import summary ({ created, skippedDuplicates, duplicatesInFile }).
+    const skipped = (Number(data.skippedDuplicates) || 0) + (Number(data.duplicatesInFile) || 0);
+    return `${data.created} imported${skipped > 0 ? `, ${skipped} skipped` : ""}`;
+  }
   if (lead) return [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.phoneNumber || "";
   if (call) return call.fromNumber ? `${call.fromNumber} → ${call.toNumber}` : "";
   if (campaign) return `${campaign.name}${campaign.status ? ` (${campaign.status})` : ""}`;

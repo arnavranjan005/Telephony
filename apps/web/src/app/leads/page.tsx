@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { DashboardEvent, Lead, LeadStatus, LeadWithDetails } from "@telephony/shared-types";
 import { apiClient } from "@/lib/apiClient";
@@ -243,8 +243,13 @@ function ImportLeadsDialog({
   const [consentGrantedAll, setConsentGrantedAll] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [dragging, setDragging] = useState(false);
+  // Monotonic id for the in-flight read. Picking a new file bumps it so a
+  // slower earlier FileReader that resolves out of order can't overwrite the
+  // newer file's parsed rows (or clear its filename on a stale error).
+  const readSeq = useRef(0);
 
   function reset() {
+    readSeq.current += 1;
     setFileName(null);
     setParsed(null);
     setConsentGrantedAll(false);
@@ -252,6 +257,7 @@ function ImportLeadsDialog({
   }
 
   function handleFile(file: File) {
+    const seq = (readSeq.current += 1);
     setFileName(file.name);
     // Clear any previously parsed rows up front: FileReader.onload is async, so
     // until it fires (or permanently, if the read errors) a stale `parsed` from
@@ -259,8 +265,12 @@ function ImportLeadsDialog({
     // letting a quick click submit the wrong file's rows under the new name.
     setParsed(null);
     const reader = new FileReader();
-    reader.onload = () => setParsed(parseLeadsCsv(String(reader.result ?? "")));
+    reader.onload = () => {
+      if (seq !== readSeq.current) return; // superseded by a newer selection
+      setParsed(parseLeadsCsv(String(reader.result ?? "")));
+    };
     reader.onerror = () => {
+      if (seq !== readSeq.current) return;
       setFileName(null);
       toast.error("Could not read that file");
     };
