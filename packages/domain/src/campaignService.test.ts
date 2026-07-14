@@ -9,13 +9,25 @@ const campaignContactUpdateMany = jest.fn();
 const campaignContactUpdate = jest.fn();
 const campaignContactFindUniqueOrThrow = jest.fn();
 const campaignContactCount = jest.fn();
+const campaignContactCreateMany = jest.fn();
 const leadUpsert = jest.fn();
+const leadCreateMany = jest.fn();
+const leadFindMany = jest.fn();
+const leadUpdateMany = jest.fn();
 
 function makeTx() {
   return {
     campaign: { create: (...args: unknown[]) => campaignCreate(...args) },
-    campaignContact: { create: (...args: unknown[]) => campaignContactCreate(...args) },
-    lead: { upsert: (...args: unknown[]) => leadUpsert(...args) },
+    campaignContact: {
+      create: (...args: unknown[]) => campaignContactCreate(...args),
+      createMany: (...args: unknown[]) => campaignContactCreateMany(...args),
+    },
+    lead: {
+      upsert: (...args: unknown[]) => leadUpsert(...args),
+      createMany: (...args: unknown[]) => leadCreateMany(...args),
+      findMany: (...args: unknown[]) => leadFindMany(...args),
+      updateMany: (...args: unknown[]) => leadUpdateMany(...args),
+    },
   };
 }
 
@@ -42,6 +54,7 @@ jest.mock("@telephony/database", () => ({
     },
   },
   CampaignStatus: { DRAFT: "DRAFT", RUNNING: "RUNNING", PAUSED: "PAUSED", COMPLETED: "COMPLETED" },
+  ConsentStatus: { UNKNOWN: "UNKNOWN", GRANTED: "GRANTED", REVOKED: "REVOKED" },
   CampaignContactStatus: {
     PENDING: "PENDING",
     WAITING_FOR_CALLING_HOURS: "WAITING_FOR_CALLING_HOURS",
@@ -84,10 +97,11 @@ beforeEach(() => {
 
 describe("campaignService", () => {
   describe("createCampaign", () => {
-    it("upserts a lead by phone number for contacts without a leadId, atomically", async () => {
+    it("bulk-creates a lead by phone number for contacts without a leadId, then links it", async () => {
       campaignCreate.mockResolvedValue({ id: "camp_1" });
-      leadUpsert.mockResolvedValue({ id: "lead_new" });
-      campaignContactCreate.mockResolvedValue({});
+      leadCreateMany.mockResolvedValue({ count: 1 });
+      leadFindMany.mockResolvedValue([{ id: "lead_new" }]);
+      campaignContactCreateMany.mockResolvedValue({ count: 1 });
       campaignFindUnique.mockResolvedValue({ id: "camp_1", contacts: [] });
 
       await createCampaign({
@@ -96,14 +110,22 @@ describe("campaignService", () => {
         contacts: [{ phoneNumber: "+15551234567", firstName: "Jane" }],
       });
 
-      expect(leadUpsert).toHaveBeenCalledWith({
-        where: { phoneNumber: "+15551234567" },
-        update: {},
-        create: { phoneNumber: "+15551234567", firstName: "Jane", lastName: undefined },
+      // New phone numbers are inserted in one createMany (existing ones skipped)...
+      expect(leadCreateMany).toHaveBeenCalledWith({
+        data: [{ phoneNumber: "+15551234567", firstName: "Jane", lastName: undefined }],
+        skipDuplicates: true,
       });
-      expect(campaignContactCreate).toHaveBeenCalledWith({
-        data: { campaignId: "camp_1", leadId: "lead_new" },
+      // ...then resolved to ids (covering new + pre-existing)...
+      expect(leadFindMany).toHaveBeenCalledWith({
+        where: { phoneNumber: { in: ["+15551234567"] } },
+        select: { id: true },
       });
+      // ...and linked in one createMany.
+      expect(campaignContactCreateMany).toHaveBeenCalledWith({
+        data: [{ campaignId: "camp_1", leadId: "lead_new" }],
+        skipDuplicates: true,
+      });
+      expect(leadUpsert).not.toHaveBeenCalled();
     });
 
     it("defaults a new campaign's streamingEnabled to true when not specified", async () => {
@@ -183,9 +205,9 @@ describe("campaignService", () => {
       });
     });
 
-    it("uses the given leadId directly without upserting a lead", async () => {
+    it("links a given leadId directly without creating a lead", async () => {
       campaignCreate.mockResolvedValue({ id: "camp_1" });
-      campaignContactCreate.mockResolvedValue({});
+      campaignContactCreateMany.mockResolvedValue({ count: 1 });
       campaignFindUnique.mockResolvedValue({ id: "camp_1", contacts: [] });
 
       await createCampaign({
@@ -194,10 +216,51 @@ describe("campaignService", () => {
         contacts: [{ leadId: "lead_existing" }],
       });
 
-      expect(leadUpsert).not.toHaveBeenCalled();
-      expect(campaignContactCreate).toHaveBeenCalledWith({
-        data: { campaignId: "camp_1", leadId: "lead_existing" },
+      expect(leadCreateMany).not.toHaveBeenCalled();
+      expect(leadFindMany).not.toHaveBeenCalled();
+      expect(campaignContactCreateMany).toHaveBeenCalledWith({
+        data: [{ campaignId: "camp_1", leadId: "lead_existing" }],
+        skipDuplicates: true,
       });
+    });
+
+    it("grants consent to every lead in the campaign when consentGrantedAll is set", async () => {
+      campaignCreate.mockResolvedValue({ id: "camp_1" });
+      leadCreateMany.mockResolvedValue({ count: 1 });
+      leadFindMany.mockResolvedValue([{ id: "lead_new" }]);
+      leadUpdateMany.mockResolvedValue({ count: 2 });
+      campaignContactCreateMany.mockResolvedValue({ count: 2 });
+      campaignFindUnique.mockResolvedValue({ id: "camp_1", contacts: [] });
+
+      await createCampaign({
+        name: "Spring outreach",
+        script: "Ask about renewal",
+        contacts: [{ leadId: "lead_existing" }, { phoneNumber: "+15551234567" }],
+        consentGrantedAll: true,
+      });
+
+      // A single updateMany grants consent to the picked lead and the new one,
+      // skipping any that are already GRANTED.
+      expect(leadUpdateMany).toHaveBeenCalledWith({
+        where: { id: { in: ["lead_existing", "lead_new"] }, consentStatus: { not: "GRANTED" } },
+        data: { consentStatus: "GRANTED", consentSource: "campaign", consentedAt: expect.any(Date) },
+      });
+    });
+
+    it("does not touch consent when consentGrantedAll is not set", async () => {
+      campaignCreate.mockResolvedValue({ id: "camp_1" });
+      leadCreateMany.mockResolvedValue({ count: 1 });
+      leadFindMany.mockResolvedValue([{ id: "lead_new" }]);
+      campaignContactCreateMany.mockResolvedValue({ count: 1 });
+      campaignFindUnique.mockResolvedValue({ id: "camp_1", contacts: [] });
+
+      await createCampaign({
+        name: "Spring outreach",
+        script: "Ask about renewal",
+        contacts: [{ phoneNumber: "+15551234567" }],
+      });
+
+      expect(leadUpdateMany).not.toHaveBeenCalled();
     });
   });
 
