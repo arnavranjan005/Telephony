@@ -1,4 +1,4 @@
-import { CampaignContactStatus, CampaignStatus, prisma } from "@telephony/database";
+import { CampaignContactStatus, CampaignStatus, ConsentStatus, prisma } from "@telephony/database";
 import { enqueueCampaignContactDial, enqueueCampaignContactDialAt } from "@telephony/queue";
 import { env } from "@telephony/config";
 import { placeOutboundCall } from "./outboundDialService";
@@ -37,13 +37,24 @@ export interface CreateCampaignInput {
    * MEDIA_STREAM_ENABLED flag at dial time either way. */
   streamingEnabled?: boolean;
   contacts: CampaignContactInput[];
+  /** Grants TCPA consent to every lead in this campaign (picked, imported, or
+   * typed) at create time. Campaigns only auto-dial GRANTED leads, so without
+   * this, contacts added by phone number land UNKNOWN and are silently
+   * skipped when the campaign runs. */
+  consentGrantedAll?: boolean;
 }
 
 /**
- * Creates a campaign and its contact list atomically: either every contact
- * (upserting leads by phone number where needed) is created alongside the
- * campaign, or none are - a failure partway through no longer leaves a
- * campaign with a partial contact list.
+ * Creates a campaign and its contact list atomically, in a handful of bulk
+ * queries rather than a per-contact upsert loop - so importing a large CSV of
+ * contacts doesn't fan out into thousands of sequential round-trips.
+ *
+ * Contacts arrive as either an existing `leadId` (picked from the lead list)
+ * or a `phoneNumber` (imported/typed). Phone contacts are resolved to leads
+ * in three steps: createMany new leads (skipping numbers already in the DB),
+ * findMany to get ids for the whole set (new *and* pre-existing - so an
+ * already-existing lead is linked, not duplicated or dropped), then createMany
+ * the campaign contacts. Either the whole set lands or none does.
  */
 export async function createCampaign(input: CreateCampaignInput) {
   const campaign = await prisma.$transaction(async (tx) => {
@@ -57,18 +68,60 @@ export async function createCampaign(input: CreateCampaignInput) {
       },
     });
 
+    // Split contacts and de-dupe phone contacts up front (keeping the first
+    // occurrence's name), so a number that appears twice - or once as a
+    // picked lead and once by phone - only ever becomes one contact.
+    const directLeadIds = new Set<string>();
+    const phoneContacts = new Map<string, { firstName?: string; lastName?: string }>();
     for (const contact of input.contacts) {
-      let leadId = contact.leadId;
-      if (!leadId) {
-        if (!contact.phoneNumber) continue;
-        const lead = await tx.lead.upsert({
-          where: { phoneNumber: contact.phoneNumber },
-          update: {},
-          create: { phoneNumber: contact.phoneNumber, firstName: contact.firstName, lastName: contact.lastName },
-        });
-        leadId = lead.id;
+      if (contact.leadId) {
+        directLeadIds.add(contact.leadId);
+      } else if (contact.phoneNumber && !phoneContacts.has(contact.phoneNumber)) {
+        phoneContacts.set(contact.phoneNumber, { firstName: contact.firstName, lastName: contact.lastName });
       }
-      await tx.campaignContact.create({ data: { campaignId: created.id, leadId } });
+    }
+
+    // 1. Create the leads for new phone numbers in one insert; existing
+    //    numbers (unique phoneNumber) are skipped, not errored.
+    if (phoneContacts.size > 0) {
+      await tx.lead.createMany({
+        data: [...phoneContacts].map(([phoneNumber, name]) => ({
+          phoneNumber,
+          firstName: name.firstName,
+          lastName: name.lastName,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    // 2. Resolve every phone number to a lead id - the ones just created and
+    //    the ones that already existed.
+    const resolved =
+      phoneContacts.size > 0
+        ? await tx.lead.findMany({
+            where: { phoneNumber: { in: [...phoneContacts.keys()] } },
+            select: { id: true },
+          })
+        : [];
+    const leadIds = [...new Set([...directLeadIds, ...resolved.map((l) => l.id)])];
+
+    // Consent (opt-in): campaigns only auto-dial GRANTED leads, so when the
+    // toggle is on, grant consent to every lead in the campaign in one update -
+    // including picked and pre-existing ones. Leave already-granted leads'
+    // consentedAt untouched.
+    if (input.consentGrantedAll && leadIds.length > 0) {
+      await tx.lead.updateMany({
+        where: { id: { in: leadIds }, consentStatus: { not: ConsentStatus.GRANTED } },
+        data: { consentStatus: ConsentStatus.GRANTED, consentSource: "campaign", consentedAt: new Date() },
+      });
+    }
+
+    // 3. Link them all to the campaign in one insert.
+    if (leadIds.length > 0) {
+      await tx.campaignContact.createMany({
+        data: leadIds.map((leadId) => ({ campaignId: created.id, leadId })),
+        skipDuplicates: true,
+      });
     }
 
     return created;

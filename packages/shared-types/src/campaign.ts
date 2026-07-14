@@ -51,4 +51,7 @@ export interface CreateCampaignInput {
   openingLine?: string;
   streamingEnabled?: boolean;
   contacts: CreateCampaignContactInput[];
+  /** Grants TCPA consent to every lead in the campaign at create time, so
+   * contacts added by CSV/number aren't skipped as un-consented when dialing. */
+  consentGrantedAll?: boolean;
 }

@@ -24,6 +24,7 @@ const createCampaignSchema = z.object({
   openingLine: z.string().optional(),
   streamingEnabled: z.boolean().optional(),
   contacts: z.array(contactSchema).default([]),
+  consentGrantedAll: z.boolean().optional(),
 });
 
 export async function postCampaign(req: Request, res: Response) {
