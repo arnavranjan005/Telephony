@@ -115,6 +115,34 @@ results back, repeat until the agent returns a final spoken reply.
 
 ### Connecting Google Calendar
 
+**Getting the OAuth client ID & secret** (`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`). These come
+from a Google Cloud project — do this once:
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and, from the project picker
+   in the top bar, **create a new project** (or select an existing one). All of the steps below apply
+   to the selected project.
+2. Enable the API this app calls: **APIs & Services → Library**, search for **Google Calendar API**,
+   and click **Enable**. Without this, token exchange succeeds but every calendar call returns a
+   `403 accessNotConfigured`.
+3. Configure the consent screen: **APIs & Services → OAuth consent screen**. Choose **External** user
+   type, fill in an app name and a support/developer email, and save. Leave it in **Testing** mode for
+   local dev/demos (see the note below about what that implies).
+4. Add the scope the app needs: on the consent screen's **Scopes** step (or **Data Access**), add
+   `https://www.googleapis.com/auth/calendar` (read/write access to Calendar), then save.
+5. Add yourself as a test user: **OAuth consent screen → Test users → Add users**, and enter the
+   Google account whose calendar you'll book against. In Testing mode only listed test users can
+   complete the consent flow.
+6. Create the credentials: **APIs & Services → Credentials → Create credentials → OAuth client ID**.
+   Pick **Web application** as the application type, give it a name, and under **Authorized redirect
+   URIs** add the exact value of your `GOOGLE_REDIRECT_URI` — for local dev that's
+   `http://localhost:3000/api/calendar/oauth/callback`. It must match character-for-character, so if
+   you deploy, add the production callback URL here too.
+7. Click **Create**. Google shows the **client ID** and **client secret** (you can re-download them
+   later from the same Credentials page). Copy them into `.env` as `GOOGLE_CLIENT_ID` and
+   `GOOGLE_CLIENT_SECRET`, and make sure `GOOGLE_REDIRECT_URI` matches step 6.
+
+**Getting the refresh token** (`GOOGLE_REFRESH_TOKEN`). Once the client ID/secret are in `.env`:
+
 1. With the API running, `GET /api/calendar/oauth/url` to get a consent URL; open it and authorize.
 2. Google redirects to `GOOGLE_REDIRECT_URI` (`/api/calendar/oauth/callback`), which returns a
    `refresh_token`. Save that as `GOOGLE_REFRESH_TOKEN` in `.env` and restart the API.
