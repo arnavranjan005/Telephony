@@ -335,8 +335,16 @@ function ImportLeadsDialog({
       if (assignCampaignId) {
         try {
           const campaignName = draftCampaigns.find((c) => c.id === assignCampaignId)?.name ?? "the campaign";
+          // Forward the same consent choice: a lead skipped as a duplicate by
+          // the leads-bulk call above (already existed, so its consent was
+          // untouched) still gets attached to the campaign here - without
+          // this, it would land with whatever consent it already had despite
+          // the toggle being on, and get silently skipped when the campaign
+          // dials. addContactsToCampaign's own consent grant applies to every
+          // resolved lead (new and pre-existing alike), closing that gap.
           const attach = await apiClient.addCampaignContacts(assignCampaignId, {
             contacts: parsed.valid.map((r) => r.lead),
+            consentGrantedAll: consentGrantedAll || undefined,
           });
           parts.push(`${attach.added} added to ${campaignName}`);
           if (attach.alreadyInCampaign > 0) parts.push(`${attach.alreadyInCampaign} already in it`);

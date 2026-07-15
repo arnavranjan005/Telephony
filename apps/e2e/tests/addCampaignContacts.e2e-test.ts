@@ -8,10 +8,16 @@
 import request from "supertest";
 import { createApp } from "../../api/src/app";
 import { prisma, ConsentStatus } from "@telephony/database";
+import { dialQueue, campaignContactJobId } from "@telephony/queue";
 
 const app = createApp();
 
 afterAll(async () => {
+  // Obliterate (not just close) - the last test in this file enqueues a real
+  // job onto the shared dial queue; leftover jobs could otherwise bleed into
+  // the next e2e file run within the same --runInBand invocation.
+  await dialQueue.obliterate({ force: true });
+  await dialQueue.close();
   await prisma.$disconnect();
 });
 
@@ -109,4 +115,41 @@ describe("add contacts to campaign e2e (real Postgres)", () => {
     const res = await request(app).post(`/api/campaigns/${campaignId}/contacts`).send({ contacts: [] });
     expect(res.status).toBe(400);
   });
+
+  it(
+    "proves the DRAFT claim is atomic: racing an attach against starting the campaign never strands a contact un-enqueued",
+    async () => {
+      const campaignId = await createDraftCampaign();
+
+      // Fire both concurrently against the real Postgres instance - only the
+      // atomic conditional updateMany claim inside addContactsToCampaign
+      // should let one of these two orderings actually happen:
+      //  (a) the attach commits first (still DRAFT) -> start then runs, sees
+      //      the freshly committed contact as PENDING, and enqueues it, or
+      //  (b) start commits first -> the attach's own claim then correctly
+      //      finds the campaign no longer DRAFT and is rejected with 409,
+      //      having inserted nothing.
+      // What must never happen is a third outcome: the attach succeeding
+      // while a contact is left PENDING on an already-RUNNING campaign
+      // without ever being enqueued - the interleaving this test guards
+      // against (see the doc comment on the updateMany claim in
+      // campaignService.ts).
+      const [attachRes] = await Promise.all([
+        request(app).post(`/api/campaigns/${campaignId}/contacts`).send({ contacts: [{ phoneNumber: "+15556660009" }] }),
+        request(app).post(`/api/campaigns/${campaignId}/start`),
+      ]);
+
+      const contacts = await prisma.campaignContact.findMany({ where: { campaignId } });
+
+      if (attachRes.status === 201) {
+        expect(contacts).toHaveLength(1);
+        const job = await dialQueue.getJob(campaignContactJobId(contacts[0].id));
+        expect(job).not.toBeNull();
+      } else {
+        expect(attachRes.status).toBe(409);
+        expect(contacts).toHaveLength(0);
+      }
+    },
+    15000
+  );
 });

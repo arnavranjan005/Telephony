@@ -174,9 +174,30 @@ export async function addContactsToCampaign(
   consentGrantedAll?: boolean
 ): Promise<AddCampaignContactsResult | null> {
   const outcome = await prisma.$transaction(async (tx) => {
-    const campaign = await tx.campaign.findUnique({ where: { id: campaignId } });
-    if (!campaign) return null;
-    if (campaign.status !== CampaignStatus.DRAFT) throw new CampaignNotDraftError(campaign.status);
+    // Atomically verify - and, for the rest of this transaction, hold via the
+    // row lock this UPDATE takes - that the campaign is still DRAFT. A plain
+    // read-then-branch here would leave a window where a concurrent
+    // startCampaign() (a separate, unwrapped update + "enqueue every PENDING
+    // contact" read) could run between the check and the contacts actually
+    // landing: it would flip status to RUNNING and read pending contacts
+    // without ever seeing the ones this call is about to insert, stranding
+    // them as PENDING on a RUNNING campaign until some future restart. This
+    // conditional updateMany mirrors completeCampaignIfExhausted's atomic
+    // status flip above - the same idiom applied to a status *gate* instead
+    // of a status *transition*: startCampaign's own update to the same row
+    // has to wait for this transaction to finish, so it can only run either
+    // fully before this claim (and this call then correctly sees non-DRAFT)
+    // or fully after this transaction commits (and its contact query then
+    // sees the new contacts already inserted).
+    const claimed = await tx.campaign.updateMany({
+      where: { id: campaignId, status: CampaignStatus.DRAFT },
+      data: { updatedAt: new Date() },
+    });
+    if (claimed.count === 0) {
+      const campaign = await tx.campaign.findUnique({ where: { id: campaignId } });
+      if (!campaign) return null;
+      throw new CampaignNotDraftError(campaign.status);
+    }
 
     const leadIds = await resolveContactLeadIds(tx, contacts, consentGrantedAll);
     if (leadIds.length === 0) return { added: 0, alreadyInCampaign: 0 };
