@@ -41,11 +41,11 @@ async function createDraftCampaign() {
 describe("add contacts to campaign e2e (real Postgres)", () => {
   it("links new and existing leads to a DRAFT campaign", async () => {
     const campaignId = await createDraftCampaign();
-    const existing = await prisma.lead.create({ data: { phoneNumber: "+15556660001", firstName: "Existing" } });
+    const existing = await prisma.lead.create({ data: { phoneNumber: "+15556660001", name: "Existing" } });
 
     const res = await request(app)
       .post(`/api/campaigns/${campaignId}/contacts`)
-      .send({ contacts: [{ leadId: existing.id }, { phoneNumber: "+15556660002", firstName: "New" }] });
+      .send({ contacts: [{ leadId: existing.id }, { phoneNumber: "+15556660002", name: "New" }] });
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ added: 2, alreadyInCampaign: 0 });

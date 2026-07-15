@@ -117,12 +117,12 @@ describe("campaignService", () => {
       await createCampaign({
         name: "Spring outreach",
         script: "Ask about renewal",
-        contacts: [{ phoneNumber: "+15551234567", firstName: "Jane" }],
+        contacts: [{ phoneNumber: "+15551234567", name: "Jane" }],
       });
 
       // New phone numbers are inserted in one createMany (existing ones skipped)...
       expect(leadCreateMany).toHaveBeenCalledWith({
-        data: [{ phoneNumber: "+15551234567", firstName: "Jane", lastName: undefined }],
+        data: [{ phoneNumber: "+15551234567", name: "Jane" }],
         skipDuplicates: true,
       });
       // ...then resolved to ids (covering new + pre-existing)...

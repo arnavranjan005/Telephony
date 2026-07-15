@@ -140,13 +140,13 @@ and set that URL in the Telnyx portal.
 - `GET /api/calls` / `GET /api/calls/:callId` — list/inspect calls (includes conversation history)
 - `GET /api/calls/:callId/events` — SSE stream of call status + AI conversation turns
 - `POST /api/calls/webhook` — Telnyx webhook receiver (call.initiated/answered/transcription/hangup)
-- `POST /api/leads` `{ firstName?, lastName?, phoneNumber, email?, status?, notes?, consentGranted? }` — `consentGranted` grants TCPA consent atomically in the same write (sets `consentStatus`/`consentSource: "admin_panel"`/`consentedAt` directly on create) rather than a separate follow-up call to the consent endpoint; a duplicate `phoneNumber` returns `409`, not a raw 500
+- `POST /api/leads` `{ name?, phoneNumber, email?, status?, notes?, consentGranted? }` — `consentGranted` grants TCPA consent atomically in the same write (sets `consentStatus`/`consentSource: "admin_panel"`/`consentedAt` directly on create) rather than a separate follow-up call to the consent endpoint; a duplicate `phoneNumber` returns `409`, not a raw 500
 - `GET /api/leads`, `GET /api/leads/:leadId`, `PATCH /api/leads/:leadId`, `DELETE /api/leads/:leadId`
 - `POST /api/leads/:leadId/consent` `{ granted, source? }` — record or revoke TCPA consent for a lead; `consentedAt` is always set server-side
 - `GET /api/calendar/busy?timeMin=&timeMax=` — free/busy lookup
 - `POST /api/calendar/appointments` `{ title, startTime, endTime, leadId?, callId?, attendeeEmail? }` — book directly via REST
 - `GET /api/appointments`, `GET /api/appointments/:id`, `POST /api/appointments/:id/cancel`
-- `POST /api/campaigns` `{ name, script?, objectionPlaybook?, contacts: [{ leadId? | phoneNumber, firstName?, lastName? }] }` — create a campaign (upserts leads from phone numbers); `objectionPlaybook` is optional campaign-specific rebuttal guidance layered on top of the baseline objection-handling instruction every call already gets (see below)
+- `POST /api/campaigns` `{ name, script?, objectionPlaybook?, contacts: [{ leadId? | phoneNumber, name? }] }` — create a campaign (upserts leads from phone numbers); `objectionPlaybook` is optional campaign-specific rebuttal guidance layered on top of the baseline objection-handling instruction every call already gets (see below)
 - `GET /api/campaigns`, `GET /api/campaigns/:id`, `POST /api/campaigns/:id/start`, `POST /api/campaigns/:id/pause` — the dial worker processes `PENDING` (and `WAITING_FOR_CALLING_HOURS`, see below) contacts of any `RUNNING` campaign automatically and marks it `COMPLETED` once none are left
 - `GET /api/campaigns/objection-baseline` — returns the baseline objection-handling instruction text every call gets by default (`OBJECTION_HANDLING_BASELINE`, `apps/api/src/callConversationService.ts`); used to display it in the admin panel's "New campaign" form so whoever writes `objectionPlaybook` can see what's already covered
 - `POST /api/followups` `{ leadId, scheduledAt, reason? }` — schedule a callback; the dial worker dials it automatically once due

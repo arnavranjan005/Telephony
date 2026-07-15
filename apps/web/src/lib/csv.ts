@@ -8,6 +8,18 @@ import type { BulkCreateLeadRow, LeadStatus } from "@telephony/shared-types";
 // LeadStatusValues in @telephony/shared-types.
 const LEAD_STATUS_VALUES: LeadStatus[] = ["COLD", "WARM", "HOT"];
 
+// Same reasoning as above - duplicated rather than imported at runtime.
+// Source of truth is sanitizePhoneNumber/isE164 in @telephony/shared-types.
+function sanitizePhoneNumber(raw: string): string {
+  const trimmed = raw.trim();
+  const digits = trimmed.replace(/\D/g, "");
+  return trimmed.startsWith("+") ? `+${digits}` : digits;
+}
+const E164_PATTERN = /^\+[1-9]\d{1,14}$/;
+function isE164(phoneNumber: string): boolean {
+  return E164_PATTERN.test(phoneNumber);
+}
+
 /**
  * Minimal RFC-4180-ish CSV parser: handles quoted fields, commas and
  * newlines inside quotes, and "" escaped quotes. Enough for the lead-import
@@ -79,7 +91,20 @@ export interface CsvParseResult {
   invalid: Array<{ line: number; reason: string }>;
 }
 
-const KNOWN_COLUMNS = ["firstname", "lastname", "phonenumber", "email", "status", "notes"] as const;
+const KNOWN_COLUMNS = ["name", "phonenumber", "email", "status", "notes", "niche", "address", "state", "website"] as const;
+
+/** Folds niche/address/state/website (common in scraped B2B lead lists,
+ * e.g. Google Maps exports) into the lead's notes, since we don't have
+ * dedicated columns for them - rather than silently dropping that context,
+ * it's the only record of what business this is and where, which the AI
+ * agent can otherwise use via get_lead_details. Appended after any
+ * hand-written `notes` value rather than replacing it. */
+function buildNotes(get: (col: (typeof KNOWN_COLUMNS)[number]) => string | undefined): string | undefined {
+  const context = [get("niche"), get("address"), get("state"), get("website")].filter(Boolean).join(" · ");
+  const manual = get("notes");
+  if (manual && context) return `${manual} (${context})`;
+  return manual || context || undefined;
+}
 
 /** Maps a header cell to our canonical column key, tolerating spaces,
  * underscores and casing ("First Name", "phone_number", "PhoneNumber"). */
@@ -115,9 +140,17 @@ export function parseLeadsCsv(text: string): CsvParseResult {
       return idx === -1 ? undefined : cells[idx]?.trim();
     };
 
-    const phoneNumber = cells[phoneIdx]?.trim();
-    if (!phoneNumber) {
+    const rawPhoneNumber = cells[phoneIdx]?.trim();
+    if (!rawPhoneNumber) {
       invalid.push({ line, reason: "Missing phone number" });
+      continue;
+    }
+    const phoneNumber = sanitizePhoneNumber(rawPhoneNumber);
+    if (!isE164(phoneNumber)) {
+      invalid.push({
+        line,
+        reason: `Invalid phone number "${rawPhoneNumber}" (expected E.164, e.g. +15551234567)`,
+      });
       continue;
     }
 
@@ -141,12 +174,11 @@ export function parseLeadsCsv(text: string): CsvParseResult {
     valid.push({
       line,
       lead: {
-        firstName: get("firstname") || undefined,
-        lastName: get("lastname") || undefined,
+        name: get("name") || undefined,
         phoneNumber,
         email,
         status,
-        notes: get("notes") || undefined,
+        notes: buildNotes(get),
       },
     });
   }
@@ -154,7 +186,10 @@ export function parseLeadsCsv(text: string): CsvParseResult {
   return { valid, invalid };
 }
 
-/** The header + one example row shown by the "Download template" link. */
+/** The header + example rows shown by the "Download template" link. niche/
+ * address/state/website are optional B2B-lead columns (e.g. from a scraped
+ * Google Maps export) folded into notes on import - see buildNotes above. */
 export const LEAD_CSV_TEMPLATE =
-  "firstName,lastName,phoneNumber,email,status,notes\n" +
-  "Jane,Doe,+15551234567,jane@example.com,WARM,Met at conference\n";
+  "name,phoneNumber,email,status,notes,niche,address,state,website\n" +
+  "Jane Doe,+15551234567,jane@example.com,WARM,Met at conference,,,,\n" +
+  "Daigle Roofing and Construction,+13373686335,,COLD,,Roofers,\"123 Main St, Dulac, LA\",Louisiana,daigleroofing.com\n";

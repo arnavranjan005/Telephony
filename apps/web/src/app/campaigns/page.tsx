@@ -240,8 +240,7 @@ function CreateCampaignDialog({
       stage([
         {
           phoneNumber: key,
-          firstName: lead.firstName ?? undefined,
-          lastName: lead.lastName ?? undefined,
+          name: lead.name ?? undefined,
           leadId: lead.id,
           source: "lead",
         },
@@ -253,8 +252,7 @@ function CreateCampaignDialog({
     stage(
       result.valid.map((r) => ({
         phoneNumber: r.lead.phoneNumber,
-        firstName: r.lead.firstName,
-        lastName: r.lead.lastName,
+        name: r.lead.name,
         source: "csv" as const,
       }))
     );
@@ -269,8 +267,7 @@ function CreateCampaignDialog({
       .map((line): StagedContact => {
         const [maybeName, maybePhone] = line.split(",").map((s) => s.trim());
         if (maybePhone) {
-          const [firstName, ...rest] = maybeName.split(" ");
-          return { phoneNumber: maybePhone, firstName, lastName: rest.join(" ") || undefined, source: "manual" };
+          return { phoneNumber: maybePhone, name: maybeName || undefined, source: "manual" };
         }
         return { phoneNumber: maybeName, source: "manual" };
       });
@@ -296,7 +293,7 @@ function CreateCampaignDialog({
 
   async function submit() {
     const contacts = [...staged.values()].map((c) =>
-      c.leadId ? { leadId: c.leadId } : { phoneNumber: c.phoneNumber, firstName: c.firstName, lastName: c.lastName }
+      c.leadId ? { leadId: c.leadId } : { phoneNumber: c.phoneNumber, name: c.name }
     );
 
     if (!name.trim() || !script.trim() || contacts.length === 0) {
@@ -434,7 +431,7 @@ function CreateCampaignDialog({
                         className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
                       >
                         <span className="min-w-0 flex-1 truncate">
-                          {[lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.phoneNumber}
+                          {lead.name || lead.phoneNumber}
                           <span className="ml-2 font-mono text-xs text-muted-foreground">{lead.phoneNumber}</span>
                         </span>
                         {fromCsv && (
@@ -515,9 +512,7 @@ function CreateCampaignDialog({
                 {stagedList.slice(0, 100).map((c) => (
                   <div key={c.phoneNumber} className="flex items-center gap-2 border-b px-3 py-1.5 text-sm last:border-b-0">
                     <span className="min-w-0 flex-1 truncate">
-                      {[c.firstName, c.lastName].filter(Boolean).join(" ") || (
-                        <span className="text-muted-foreground">No name</span>
-                      )}
+                      {c.name || <span className="text-muted-foreground">No name</span>}
                       <span className="ml-2 font-mono text-xs text-muted-foreground">{c.phoneNumber}</span>
                     </span>
                     <span className="rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -563,8 +558,7 @@ function CreateCampaignDialog({
 
 interface StagedContact {
   phoneNumber: string;
-  firstName?: string;
-  lastName?: string;
+  name?: string;
   /** Set when the contact came from picking an existing lead. */
   leadId?: string;
   source: "csv" | "lead" | "manual";
@@ -619,10 +613,7 @@ function CampaignDetailSheet({ campaignId, onClose }: { campaignId: string | nul
                 {campaign.contacts.map((contact) => (
                   <div key={contact.id} className="flex items-center justify-between text-sm">
                     <div>
-                      <p className="font-medium">
-                        {[contact.lead.firstName, contact.lead.lastName].filter(Boolean).join(" ") ||
-                          contact.lead.phoneNumber}
-                      </p>
+                      <p className="font-medium">{contact.lead.name || contact.lead.phoneNumber}</p>
                       <p className="font-mono text-xs text-muted-foreground">{contact.lead.phoneNumber}</p>
                     </div>
                     <StatusBadge status={contact.status} />

@@ -4,6 +4,7 @@ import { prisma, LeadStatus, ConsentStatus, Prisma } from "@telephony/database";
 import { recordConsent, revokeConsent } from "@telephony/domain";
 import {
   bulkCreateLeadsSchema,
+  phoneNumberSchema,
   LEADS_PAGE_SIZE,
   LEADS_PAGE_SIZE_MAX,
   type BulkCreateLeadRow,
@@ -12,9 +13,8 @@ import {
 import { callEventBus } from "../sse/eventBus";
 
 const createLeadSchema = z.object({
-  firstName: z.string().optional(),
-  lastName: z.string().optional(),
-  phoneNumber: z.string().min(1),
+  name: z.string().optional(),
+  phoneNumber: phoneNumberSchema,
   email: z.string().email().optional(),
   status: z.nativeEnum(LeadStatus).optional(),
   notes: z.string().optional(),
@@ -114,15 +114,14 @@ export async function listLeads(req: Request, res: Response) {
     : LEADS_PAGE_SIZE;
 
   // Search matches name or phone so the lead picker can find any lead across
-  // the whole table (not just a preloaded page). OR across firstName/lastName/
-  // phoneNumber, case-insensitive contains; combined with the status filter.
+  // the whole table (not just a preloaded page). OR across name/phoneNumber,
+  // case-insensitive contains; combined with the status filter.
   const where: Prisma.LeadWhereInput = {
     ...(status ? { status } : {}),
     ...(search
       ? {
           OR: [
-            { firstName: { contains: search, mode: "insensitive" } },
-            { lastName: { contains: search, mode: "insensitive" } },
+            { name: { contains: search, mode: "insensitive" } },
             { phoneNumber: { contains: search } },
           ],
         }
@@ -158,7 +157,7 @@ export async function getLead(req: Request, res: Response) {
 }
 
 const updateLeadSchema = createLeadSchema.partial().omit({ phoneNumber: true }).extend({
-  phoneNumber: z.string().min(1).optional(),
+  phoneNumber: phoneNumberSchema.optional(),
 });
 
 export async function updateLead(req: Request, res: Response) {

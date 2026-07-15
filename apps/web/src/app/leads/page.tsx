@@ -149,9 +149,7 @@ export default function LeadsPage() {
           <TableBody>
             {leads.map((lead) => (
               <TableRow key={lead.id} className="cursor-pointer" onClick={() => setSelectedLeadId(lead.id)}>
-                <TableCell className="font-medium">
-                  {[lead.firstName, lead.lastName].filter(Boolean).join(" ") || "—"}
-                </TableCell>
+                <TableCell className="font-medium">{lead.name || "—"}</TableCell>
                 <TableCell className="font-mono text-xs">{lead.phoneNumber}</TableCell>
                 <TableCell>
                   <StatusBadge status={lead.status} />
@@ -188,15 +186,13 @@ function CreateLeadDialog({
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
 }) {
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
+  const [name, setName] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [consentGranted, setConsentGranted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   function reset() {
-    setFirstName("");
-    setLastName("");
+    setName("");
     setPhoneNumber("");
     setConsentGranted(false);
   }
@@ -210,8 +206,7 @@ function CreateLeadDialog({
     setSubmitting(true);
     try {
       await apiClient.createLead({
-        firstName: firstName || undefined,
-        lastName: lastName || undefined,
+        name: name || undefined,
         phoneNumber: phoneNumber.trim(),
         consentGranted: consentGranted || undefined,
       });
@@ -236,15 +231,9 @@ function CreateLeadDialog({
           <DialogDescription>Add a contact so it's ready to call - via a campaign or one-off.</DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label>First name</Label>
-              <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Jane" />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label>Last name</Label>
-              <Input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Doe" />
-            </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Name</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" />
           </div>
           <div className="flex flex-col gap-1.5">
             <Label>Phone number</Label>
@@ -386,7 +375,8 @@ function ImportLeadsDialog({
           <DialogTitle>Import leads from CSV</DialogTitle>
           <DialogDescription>
             Upload a CSV with a <span className="font-mono text-xs">phoneNumber</span> column. Optional columns:
-            firstName, lastName, email, status, notes.
+            name, email, status, notes, niche, address, state, website. The last four (common in scraped business
+            lists) get folded into notes.
           </DialogDescription>
         </DialogHeader>
 
@@ -423,9 +413,7 @@ function ImportLeadsDialog({
                     <TableBody>
                       {parsed.valid.slice(0, 20).map((r) => (
                         <TableRow key={r.line}>
-                          <TableCell className="font-medium">
-                            {[r.lead.firstName, r.lead.lastName].filter(Boolean).join(" ") || "—"}
-                          </TableCell>
+                          <TableCell className="font-medium">{r.lead.name || "—"}</TableCell>
                           <TableCell className="font-mono text-xs">{r.lead.phoneNumber}</TableCell>
                           <TableCell>{r.lead.status ?? "COLD"}</TableCell>
                         </TableRow>
@@ -580,7 +568,7 @@ function LeadDetailSheet({
     <Sheet open={leadId !== null} onOpenChange={(open) => !open && onClose()}>
       <SheetContent className="w-full gap-0 overflow-y-auto sm:max-w-lg">
         <SheetHeader>
-          <SheetTitle>{lead ? [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.phoneNumber : "Lead"}</SheetTitle>
+          <SheetTitle>{lead ? lead.name || lead.phoneNumber : "Lead"}</SheetTitle>
           <SheetDescription>{lead?.phoneNumber}</SheetDescription>
         </SheetHeader>
 

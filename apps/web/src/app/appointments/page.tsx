@@ -44,9 +44,7 @@ function AppointmentsTable({
         {appointments.map((appt) => (
           <TableRow key={appt.id}>
             <TableCell className="font-medium">{appt.title}</TableCell>
-            <TableCell>
-              {appt.lead ? [appt.lead.firstName, appt.lead.lastName].filter(Boolean).join(" ") || appt.lead.phoneNumber : "—"}
-            </TableCell>
+            <TableCell>{appt.lead ? appt.lead.name || appt.lead.phoneNumber : "—"}</TableCell>
             <TableCell className="text-muted-foreground">{formatDateTime(appt.startTime)}</TableCell>
             <TableCell>
               <StatusBadge status={appt.status} />

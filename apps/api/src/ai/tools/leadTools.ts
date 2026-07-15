@@ -38,6 +38,33 @@ export function buildLeadTools(context: LeadToolContext): ToolDefinition[] {
     },
   };
 
+  const getLeadDetails: ToolDefinition = {
+    name: "get_lead_details",
+    description:
+      "Look up the recorded details for this call's lead: the organization/company name on file, its current " +
+      "qualification status, and any notes from earlier interactions. The name on file always identifies the " +
+      "business/organization you're calling, never the individual answering the phone - that person is an " +
+      "employee or representative of the company, not the company itself. Never tell them \"you are " +
+      "[company name]\" or otherwise address them as if the company name were their own personal name; instead " +
+      "use it to confirm you've reached the right business (e.g. \"Am I speaking with someone from [company " +
+      "name]?\") or reference it naturally in conversation. Call this early on if you don't already know which " +
+      "company you're speaking with.",
+    parameters: { type: "object", properties: {} },
+    handler: async () => {
+      if (!context.leadId) {
+        return { found: false, reason: "No lead associated with this call" };
+      }
+
+      const lead = await prisma.lead.findUnique({
+        where: { id: context.leadId },
+        select: { name: true, status: true, notes: true },
+      });
+      if (!lead) return { found: false, reason: "Lead not found" };
+
+      return { found: true, organizationName: lead.name, status: lead.status, notes: lead.notes };
+    },
+  };
+
   const getLeadEmail: ToolDefinition = {
     name: "get_lead_email",
     description:
@@ -58,5 +85,5 @@ export function buildLeadTools(context: LeadToolContext): ToolDefinition[] {
     },
   };
 
-  return [updateLead, getLeadEmail];
+  return [updateLead, getLeadDetails, getLeadEmail];
 }

@@ -98,9 +98,7 @@ export default function FollowUpsPage() {
           <TableBody>
             {followUps.map((followUp) => (
               <TableRow key={followUp.id}>
-                <TableCell className="font-medium">
-                  {[followUp.lead.firstName, followUp.lead.lastName].filter(Boolean).join(" ") || followUp.lead.phoneNumber}
-                </TableCell>
+                <TableCell className="font-medium">{followUp.lead.name || followUp.lead.phoneNumber}</TableCell>
                 <TableCell className="text-muted-foreground">{formatDateTime(followUp.scheduledAt)}</TableCell>
                 <TableCell className="text-muted-foreground">{followUp.reason ?? "—"}</TableCell>
                 <TableCell>
@@ -185,7 +183,7 @@ function CreateFollowUpDialog({
               <SelectContent>
                 {leads.map((lead) => (
                   <SelectItem key={lead.id} value={lead.id}>
-                    {[lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.phoneNumber} — {lead.phoneNumber}
+                    {lead.name || lead.phoneNumber} — {lead.phoneNumber}
                   </SelectItem>
                 ))}
               </SelectContent>

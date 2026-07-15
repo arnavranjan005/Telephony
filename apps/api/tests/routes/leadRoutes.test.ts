@@ -29,15 +29,33 @@ describe("Lead routes", () => {
   it("POST /api/leads creates a lead", async () => {
     leadCreate.mockResolvedValue({ id: "lead_1", phoneNumber: "+15551234567", status: "COLD" });
 
-    const res = await request(app).post("/api/leads").send({ phoneNumber: "+15551234567", firstName: "Jane" });
+    const res = await request(app).post("/api/leads").send({ phoneNumber: "+15551234567", name: "Jane" });
 
     expect(res.status).toBe(201);
     expect(res.body.lead).toEqual({ id: "lead_1", phoneNumber: "+15551234567", status: "COLD" });
-    expect(leadCreate).toHaveBeenCalledWith({ data: { phoneNumber: "+15551234567", firstName: "Jane" } });
+    expect(leadCreate).toHaveBeenCalledWith({ data: { phoneNumber: "+15551234567", name: "Jane" } });
   });
 
   it("POST /api/leads rejects a request missing the required phoneNumber", async () => {
-    const res = await request(app).post("/api/leads").send({ firstName: "Jane" });
+    const res = await request(app).post("/api/leads").send({ name: "Jane" });
+
+    expect(res.status).toBe(400);
+    expect(leadCreate).not.toHaveBeenCalled();
+  });
+
+  it("POST /api/leads sanitizes a loosely-formatted phone number to E.164 before saving", async () => {
+    leadCreate.mockResolvedValue({ id: "lead_2", phoneNumber: "+13373686335", status: "COLD" });
+
+    const res = await request(app).post("/api/leads").send({ phoneNumber: "+1 337-368-6335", name: "Daigle Roofing" });
+
+    expect(res.status).toBe(201);
+    expect(leadCreate).toHaveBeenCalledWith({ data: { phoneNumber: "+13373686335", name: "Daigle Roofing" } });
+  });
+
+  it("POST /api/leads rejects a phone number that isn't valid E.164 after sanitizing", async () => {
+    // No country code - sanitizing strips the dashes but there's no leading +
+    // to anchor a valid E.164 number, so this must be rejected, not guessed at.
+    const res = await request(app).post("/api/leads").send({ phoneNumber: "337-368-6335" });
 
     expect(res.status).toBe(400);
     expect(leadCreate).not.toHaveBeenCalled();

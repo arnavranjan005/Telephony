@@ -40,8 +40,7 @@ export interface CampaignWithContacts extends Campaign {
 export interface CreateCampaignContactInput {
   leadId?: string;
   phoneNumber?: string;
-  firstName?: string;
-  lastName?: string;
+  name?: string;
 }
 
 export interface CreateCampaignInput {

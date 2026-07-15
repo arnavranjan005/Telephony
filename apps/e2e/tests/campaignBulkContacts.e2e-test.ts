@@ -28,7 +28,7 @@ beforeEach(async () => {
 
 describe("campaign bulk contacts e2e (real Postgres)", () => {
   it("links existing leads (by id and by phone) and creates new ones, de-duped", async () => {
-    const e1 = await prisma.lead.create({ data: { phoneNumber: "+15551000001", firstName: "Existing", lastName: "One" } });
+    const e1 = await prisma.lead.create({ data: { phoneNumber: "+15551000001", name: "Existing One" } });
     const e2 = await prisma.lead.create({ data: { phoneNumber: "+15551000002" } });
 
     const res = await request(app)
@@ -40,7 +40,7 @@ describe("campaign bulk contacts e2e (real Postgres)", () => {
           { leadId: e1.id }, // picked existing lead
           { phoneNumber: "+15551000001" }, // SAME lead by phone -> must de-dupe with the leadId entry
           { phoneNumber: "+15551000002" }, // other existing lead, by phone -> linked, not duplicated
-          { phoneNumber: "+15551000003", firstName: "New" }, // brand new
+          { phoneNumber: "+15551000003", name: "New" }, // brand new
           { phoneNumber: "+15551000003" }, // same new number twice -> one
         ],
       });
@@ -57,7 +57,7 @@ describe("campaign bulk contacts e2e (real Postgres)", () => {
     expect(await prisma.lead.count({ where: { phoneNumber: "+15551000001" } })).toBe(1);
     // The new lead kept its name from the first occurrence.
     const created = await prisma.lead.findUniqueOrThrow({ where: { phoneNumber: "+15551000003" } });
-    expect(created.firstName).toBe("New");
+    expect(created.name).toBe("New");
   });
 
   it("consentGrantedAll grants consent to every lead in the campaign", async () => {
@@ -91,6 +91,25 @@ describe("campaign bulk contacts e2e (real Postgres)", () => {
     expect(res.status).toBe(201);
     const lead = await prisma.lead.findUniqueOrThrow({ where: { phoneNumber: "+15553000001" } });
     expect(lead.consentStatus).toBe(ConsentStatus.UNKNOWN);
+  });
+
+  it("sanitizes a loosely-formatted contact phone number to E.164 before saving", async () => {
+    const res = await request(app)
+      .post("/api/campaigns")
+      .send({ name: "sanitize", script: "Ask", contacts: [{ phoneNumber: "+1 337-368-6335", name: "Daigle Roofing" }] });
+
+    expect(res.status).toBe(201);
+    const lead = await prisma.lead.findUniqueOrThrow({ where: { phoneNumber: "+13373686335" } });
+    expect(lead.name).toBe("Daigle Roofing");
+  });
+
+  it("rejects a contact phone number that isn't valid E.164 after sanitizing", async () => {
+    const res = await request(app)
+      .post("/api/campaigns")
+      .send({ name: "bad number", script: "Ask", contacts: [{ phoneNumber: "337-368-6335" }] });
+
+    expect(res.status).toBe(400);
+    expect(await prisma.lead.count()).toBe(0);
   });
 
   it("handles a large contact list in one create (bulk, not per-row)", async () => {

@@ -34,6 +34,43 @@ describe("leadTools", () => {
     expect(leadUpdate).not.toHaveBeenCalled();
   });
 
+  describe("get_lead_details", () => {
+    it("reports the organization name, status, and notes on file for the lead", async () => {
+      leadFindUnique.mockResolvedValue({ name: "Daigle Roofing and Construction", status: "WARM", notes: "Asked about pricing" });
+
+      const getLeadDetails = buildLeadTools({ leadId: "lead_1" }).find((t) => t.name === "get_lead_details")!;
+      const result = await getLeadDetails.handler({});
+
+      expect(result).toEqual({
+        found: true,
+        organizationName: "Daigle Roofing and Construction",
+        status: "WARM",
+        notes: "Asked about pricing",
+      });
+      expect(leadFindUnique).toHaveBeenCalledWith({
+        where: { id: "lead_1" },
+        select: { name: true, status: true, notes: true },
+      });
+    });
+
+    it("reports found: false when the lead record itself isn't found", async () => {
+      leadFindUnique.mockResolvedValue(null);
+
+      const getLeadDetails = buildLeadTools({ leadId: "lead_1" }).find((t) => t.name === "get_lead_details")!;
+      const result = await getLeadDetails.handler({});
+
+      expect(result).toEqual({ found: false, reason: "Lead not found" });
+    });
+
+    it("is a no-op when there is no lead associated with the call", async () => {
+      const getLeadDetails = buildLeadTools({}).find((t) => t.name === "get_lead_details")!;
+      const result = await getLeadDetails.handler({});
+
+      expect(result).toEqual({ found: false, reason: "No lead associated with this call" });
+      expect(leadFindUnique).not.toHaveBeenCalled();
+    });
+  });
+
   describe("get_lead_email", () => {
     it("reports the email on file for the lead", async () => {
       leadFindUnique.mockResolvedValue({ email: "jane@example.com" });
