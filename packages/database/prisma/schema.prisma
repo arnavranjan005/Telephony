@@ -224,6 +224,12 @@ model CampaignContact {
   attemptedAt DateTime?
   createdAt   DateTime               @default(now())
 
+  // One contact row per lead per campaign - relied on by addContactsToCampaign
+  // (packages/domain/campaignService.ts) so createMany({ skipDuplicates: true })
+  // actually prevents re-linking a lead already in the campaign (and double-
+  // dialing it), rather than silently doing nothing since there'd be no
+  // constraint to violate.
+  @@unique([campaignId, leadId])
   @@index([campaignId, status])
 }
 

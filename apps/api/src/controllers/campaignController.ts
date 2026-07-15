@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import {
+  addContactsToCampaign,
+  CampaignNotDraftError,
   createCampaign,
   getCampaign,
   listCampaigns,
@@ -34,6 +36,38 @@ export async function postCampaign(req: Request, res: Response) {
   const campaign = await createCampaign(parsed.data);
   callEventBus.publishGlobal("campaign.created", { campaign });
   res.status(201).json({ campaign });
+}
+
+const addCampaignContactsSchema = z.object({
+  contacts: z.array(contactSchema).min(1, "At least one contact is required"),
+  consentGrantedAll: z.boolean().optional(),
+});
+
+/**
+ * Attaches more contacts to a campaign that hasn't started yet - e.g. from a
+ * lead CSV import elsewhere in the app that the user wants added to a
+ * campaign they've already drafted. Only DRAFT campaigns accept this: once a
+ * campaign is dialing (or done), appending to its contact list live would
+ * need different handling than a plain bulk insert.
+ */
+export async function postCampaignContacts(req: Request, res: Response) {
+  const parsed = addCampaignContactsSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  try {
+    const result = await addContactsToCampaign(
+      req.params.campaignId,
+      parsed.data.contacts,
+      parsed.data.consentGrantedAll
+    );
+    if (!result) return res.status(404).json({ error: "Campaign not found" });
+
+    callEventBus.publishGlobal("campaign.updated", { campaign: result.campaign });
+    res.status(201).json({ campaign: result.campaign, added: result.added, alreadyInCampaign: result.alreadyInCampaign });
+  } catch (error) {
+    if (error instanceof CampaignNotDraftError) return res.status(409).json({ error: error.message });
+    throw error;
+  }
 }
 
 /**

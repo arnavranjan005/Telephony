@@ -17,7 +17,10 @@ const leadUpdateMany = jest.fn();
 
 function makeTx() {
   return {
-    campaign: { create: (...args: unknown[]) => campaignCreate(...args) },
+    campaign: {
+      create: (...args: unknown[]) => campaignCreate(...args),
+      findUnique: (...args: unknown[]) => campaignFindUnique(...args),
+    },
     campaignContact: {
       create: (...args: unknown[]) => campaignContactCreate(...args),
       createMany: (...args: unknown[]) => campaignContactCreateMany(...args),
@@ -88,7 +91,13 @@ jest.mock("./compliance/callingHours", () => ({
 const mockEnv = { MEDIA_STREAM_ENABLED: false };
 jest.mock("@telephony/config", () => ({ env: mockEnv }));
 
-import { createCampaign, processCampaignContactJob, startCampaign } from "./campaignService";
+import {
+  addContactsToCampaign,
+  CampaignNotDraftError,
+  createCampaign,
+  processCampaignContactJob,
+  startCampaign,
+} from "./campaignService";
 
 beforeEach(() => {
   isWithinCallingHours.mockReturnValue(true); // default: every existing test dials as if within the legal window
@@ -261,6 +270,76 @@ describe("campaignService", () => {
       });
 
       expect(leadUpdateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("addContactsToCampaign", () => {
+    it("returns null when the campaign doesn't exist, without writing anything", async () => {
+      campaignFindUnique.mockResolvedValue(null);
+
+      const result = await addContactsToCampaign("camp_missing", [{ phoneNumber: "+15551234567" }]);
+
+      expect(result).toBeNull();
+      expect(leadCreateMany).not.toHaveBeenCalled();
+      expect(campaignContactCreateMany).not.toHaveBeenCalled();
+    });
+
+    it("throws CampaignNotDraftError for a campaign that already started, without writing anything", async () => {
+      campaignFindUnique.mockResolvedValue({ id: "camp_1", status: "RUNNING" });
+
+      await expect(addContactsToCampaign("camp_1", [{ phoneNumber: "+15551234567" }])).rejects.toThrow(
+        CampaignNotDraftError
+      );
+      expect(leadCreateMany).not.toHaveBeenCalled();
+      expect(campaignContactCreateMany).not.toHaveBeenCalled();
+    });
+
+    it("links new and existing leads to a DRAFT campaign, reporting counts from skipDuplicates", async () => {
+      campaignFindUnique.mockResolvedValue({ id: "camp_1", status: "DRAFT" });
+      leadCreateMany.mockResolvedValue({ count: 1 });
+      leadFindMany.mockResolvedValue([{ id: "lead_new" }]);
+      // 2 leads resolved (lead_existing picked directly + lead_new by phone),
+      // but only 1 actually inserted - the unique(campaignId, leadId)
+      // constraint made the DB skip lead_existing as already-linked.
+      campaignContactCreateMany.mockResolvedValue({ count: 1 });
+      // campaign.findUnique is called twice: once inside the transaction (no
+      // `include`, just checking status) and once by getCampaign afterwards
+      // (with `include`, to return the full campaign+contacts) - distinguish
+      // them by that shape.
+      campaignFindUnique.mockImplementation(async (args: { where: { id: string }; include?: unknown }) =>
+        args.include ? { id: "camp_1", status: "DRAFT", contacts: [] } : { id: "camp_1", status: "DRAFT" }
+      );
+
+      const result = await addContactsToCampaign(
+        "camp_1",
+        [{ leadId: "lead_existing" }, { phoneNumber: "+15551234567" }],
+        undefined
+      );
+
+      expect(campaignContactCreateMany).toHaveBeenCalledWith({
+        data: expect.arrayContaining([
+          { campaignId: "camp_1", leadId: "lead_existing" },
+          { campaignId: "camp_1", leadId: "lead_new" },
+        ]),
+        skipDuplicates: true,
+      });
+      expect(result).toMatchObject({ added: 1, alreadyInCampaign: 1 });
+    });
+
+    it("grants consent to resolved leads when consentGrantedAll is set", async () => {
+      campaignFindUnique.mockImplementation(async (args: { where: { id: string }; include?: unknown }) =>
+        args.include ? { id: "camp_1", status: "DRAFT", contacts: [] } : { id: "camp_1", status: "DRAFT" }
+      );
+      leadCreateMany.mockResolvedValue({ count: 1 });
+      leadFindMany.mockResolvedValue([{ id: "lead_new" }]);
+      campaignContactCreateMany.mockResolvedValue({ count: 1 });
+
+      await addContactsToCampaign("camp_1", [{ phoneNumber: "+15551234567" }], true);
+
+      expect(leadUpdateMany).toHaveBeenCalledWith({
+        where: { id: { in: ["lead_new"] }, consentStatus: { not: "GRANTED" } },
+        data: { consentStatus: "GRANTED", consentSource: "campaign", consentedAt: expect.any(Date) },
+      });
     });
   });
 

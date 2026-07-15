@@ -5,6 +5,7 @@ import {
   getObjectionBaseline,
   getOpeningLineDefault,
   postCampaign,
+  postCampaignContacts,
   postPauseCampaign,
   postStartCampaign,
 } from "../controllers/campaignController";
@@ -21,5 +22,6 @@ router.get("/opening-line-default", getOpeningLineDefault);
 router.get("/:campaignId", getCampaignById);
 router.post("/:campaignId/start", postStartCampaign);
 router.post("/:campaignId/pause", postPauseCampaign);
+router.post("/:campaignId/contacts", idempotency, postCampaignContacts);
 
 export default router;

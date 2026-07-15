@@ -55,3 +55,16 @@ export interface CreateCampaignInput {
    * contacts added by CSV/number aren't skipped as un-consented when dialing. */
   consentGrantedAll?: boolean;
 }
+
+export interface AddCampaignContactsInput {
+  contacts: CreateCampaignContactInput[];
+  consentGrantedAll?: boolean;
+}
+
+export interface AddCampaignContactsResult {
+  campaign: CampaignWithContacts;
+  /** New campaign-contact links created. */
+  added: number;
+  /** Resolved leads that already had a contact row in this campaign. */
+  alreadyInCampaign: number;
+}
