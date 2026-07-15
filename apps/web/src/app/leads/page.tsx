@@ -375,7 +375,8 @@ function ImportLeadsDialog({
           <DialogTitle>Import leads from CSV</DialogTitle>
           <DialogDescription>
             Upload a CSV with a <span className="font-mono text-xs">phoneNumber</span> column. Optional columns:
-            name, email, status, notes.
+            name, email, status, notes, niche, address, state, website. The last four (common in scraped business
+            lists) get folded into notes.
           </DialogDescription>
         </DialogHeader>
 
