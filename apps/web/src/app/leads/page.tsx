@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import type { DashboardEvent, Lead, LeadStatus, LeadWithDetails } from "@telephony/shared-types";
 import { apiClient } from "@/lib/apiClient";
@@ -26,8 +26,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { Plus, Upload, FileDown } from "lucide-react";
-import { parseLeadsCsv, LEAD_CSV_TEMPLATE, type CsvParseResult } from "@/lib/csv";
+import { Plus, Upload } from "lucide-react";
+import { CsvDropzone } from "@/components/csv-dropzone";
+import { type CsvParseResult } from "@/lib/csv";
 
 // Local copy (not a runtime import from @telephony/shared-types) so the web
 // app keeps only type-only imports from that package - a value import would
@@ -276,53 +277,16 @@ function ImportLeadsDialog({
   onOpenChange: (open: boolean) => void;
   onImported: () => void;
 }) {
-  const [fileName, setFileName] = useState<string | null>(null);
   const [parsed, setParsed] = useState<CsvParseResult | null>(null);
   const [consentGrantedAll, setConsentGrantedAll] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  // Monotonic id for the in-flight read. Picking a new file bumps it so a
-  // slower earlier FileReader that resolves out of order can't overwrite the
-  // newer file's parsed rows (or clear its filename on a stale error).
-  const readSeq = useRef(0);
+  // Bumped on reset to remount the dropzone and clear its internal file state.
+  const [dropzoneKey, setDropzoneKey] = useState(0);
 
   function reset() {
-    readSeq.current += 1;
-    setFileName(null);
     setParsed(null);
     setConsentGrantedAll(false);
-    setDragging(false);
-  }
-
-  function handleFile(file: File) {
-    const seq = (readSeq.current += 1);
-    setFileName(file.name);
-    // Clear any previously parsed rows up front: FileReader.onload is async, so
-    // until it fires (or permanently, if the read errors) a stale `parsed` from
-    // the prior file would otherwise keep the preview and Import button live -
-    // letting a quick click submit the wrong file's rows under the new name.
-    setParsed(null);
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (seq !== readSeq.current) return; // superseded by a newer selection
-      setParsed(parseLeadsCsv(String(reader.result ?? "")));
-    };
-    reader.onerror = () => {
-      if (seq !== readSeq.current) return;
-      setFileName(null);
-      toast.error("Could not read that file");
-    };
-    reader.readAsText(file);
-  }
-
-  function downloadTemplate() {
-    const blob = new Blob([LEAD_CSV_TEMPLATE], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "leads-template.csv";
-    a.click();
-    URL.revokeObjectURL(url);
+    setDropzoneKey((k) => k + 1);
   }
 
   const validCount = parsed?.valid.length ?? 0;
@@ -380,52 +344,7 @@ function ImportLeadsDialog({
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
-          {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
-          <label
-            className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed p-6 text-center transition-colors ${
-              dragging ? "border-primary bg-accent" : "hover:bg-accent/50"
-            }`}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragging(false);
-              const file = e.dataTransfer.files[0];
-              if (file) handleFile(file);
-            }}
-          >
-            <Upload className="size-5 text-muted-foreground" />
-            <div className="text-sm">
-              {fileName ? (
-                <span className="font-medium">{fileName}</span>
-              ) : (
-                <>
-                  <span className="font-medium text-primary">Choose a file</span>
-                  <span className="text-muted-foreground"> or drag it here</span>
-                </>
-              )}
-            </div>
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleFile(file);
-              }}
-            />
-          </label>
-
-          <button
-            type="button"
-            onClick={downloadTemplate}
-            className="flex items-center gap-1.5 self-start text-xs text-muted-foreground hover:text-foreground"
-          >
-            <FileDown className="size-3.5" /> Download template
-          </button>
+          <CsvDropzone key={dropzoneKey} onParsed={setParsed} />
 
           {parsed && (
             <div className="flex flex-col gap-3">
