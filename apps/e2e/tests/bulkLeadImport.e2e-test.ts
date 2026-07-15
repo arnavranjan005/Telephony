@@ -30,8 +30,8 @@ beforeEach(async () => {
 describe("bulk lead import e2e (real Postgres)", () => {
   it("imports every row in a single request and reports the created count", async () => {
     const leads = [
-      { firstName: "Jane", lastName: "Doe", phoneNumber: "+15551230001", email: "jane@example.com" },
-      { firstName: "John", phoneNumber: "+15551230002", status: "WARM" as const },
+      { name: "Jane Doe", phoneNumber: "+15551230001", email: "jane@example.com" },
+      { name: "John", phoneNumber: "+15551230002", status: "WARM" as const },
       { phoneNumber: "+15551230003", notes: "no name" },
     ];
 
@@ -43,8 +43,8 @@ describe("bulk lead import e2e (real Postgres)", () => {
     const rows = await prisma.lead.findMany({ orderBy: { phoneNumber: "asc" } });
     expect(rows).toHaveLength(3);
     // Fields are persisted, and status defaults to COLD when not supplied.
-    expect(rows[0]).toMatchObject({ firstName: "Jane", email: "jane@example.com", status: "COLD" });
-    expect(rows[1]).toMatchObject({ firstName: "John", status: "WARM" });
+    expect(rows[0]).toMatchObject({ name: "Jane Doe", email: "jane@example.com", status: "COLD" });
+    expect(rows[1]).toMatchObject({ name: "John", status: "WARM" });
     // Without the batch toggle, consent stays UNKNOWN.
     expect(rows.every((r) => r.consentStatus === ConsentStatus.UNKNOWN)).toBe(true);
   });
@@ -84,8 +84,8 @@ describe("bulk lead import e2e (real Postgres)", () => {
 
   it("de-dupes rows that collide within the same file", async () => {
     const leads = [
-      { firstName: "First", phoneNumber: "+15554440001" },
-      { firstName: "Dup", phoneNumber: "+15554440001" }, // same number, dropped
+      { name: "First", phoneNumber: "+15554440001" },
+      { name: "Dup", phoneNumber: "+15554440001" }, // same number, dropped
       { phoneNumber: "+15554440002" },
     ];
     const res = await request(app).post("/api/leads/bulk").send({ leads });
@@ -95,7 +95,7 @@ describe("bulk lead import e2e (real Postgres)", () => {
 
     // The first occurrence wins.
     const kept = await prisma.lead.findUniqueOrThrow({ where: { phoneNumber: "+15554440001" } });
-    expect(kept.firstName).toBe("First");
+    expect(kept.name).toBe("First");
   });
 
   it("rejects an empty batch and a batch over the row cap", async () => {

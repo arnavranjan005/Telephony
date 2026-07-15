@@ -12,8 +12,7 @@ import {
 import { callEventBus } from "../sse/eventBus";
 
 const createLeadSchema = z.object({
-  firstName: z.string().optional(),
-  lastName: z.string().optional(),
+  name: z.string().optional(),
   phoneNumber: z.string().min(1),
   email: z.string().email().optional(),
   status: z.nativeEnum(LeadStatus).optional(),
@@ -114,15 +113,14 @@ export async function listLeads(req: Request, res: Response) {
     : LEADS_PAGE_SIZE;
 
   // Search matches name or phone so the lead picker can find any lead across
-  // the whole table (not just a preloaded page). OR across firstName/lastName/
-  // phoneNumber, case-insensitive contains; combined with the status filter.
+  // the whole table (not just a preloaded page). OR across name/phoneNumber,
+  // case-insensitive contains; combined with the status filter.
   const where: Prisma.LeadWhereInput = {
     ...(status ? { status } : {}),
     ...(search
       ? {
           OR: [
-            { firstName: { contains: search, mode: "insensitive" } },
-            { lastName: { contains: search, mode: "insensitive" } },
+            { name: { contains: search, mode: "insensitive" } },
             { phoneNumber: { contains: search } },
           ],
         }

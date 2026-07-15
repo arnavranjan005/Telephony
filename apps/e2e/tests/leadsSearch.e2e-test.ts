@@ -1,8 +1,8 @@
 // Server-side lead search (GET /api/leads?search=) against real Postgres.
 // The campaign lead picker relies on this to find any lead across the whole
-// table by name or number - proving the OR match on firstName/lastName/
-// phoneNumber, case-insensitivity, and that search composes with status and
-// cursor pagination.
+// table by name or number - proving the OR match on name/phoneNumber,
+// case-insensitivity, and that search composes with status and cursor
+// pagination.
 
 import request from "supertest";
 import { createApp } from "../../api/src/app";
@@ -27,9 +27,9 @@ beforeEach(async () => {
 });
 
 async function seed() {
-  await prisma.lead.create({ data: { firstName: "Jane", lastName: "Doe", phoneNumber: "+15551230001" } });
-  await prisma.lead.create({ data: { firstName: "Jane", lastName: "Smith", phoneNumber: "+15559990002" } });
-  await prisma.lead.create({ data: { firstName: "Bob", lastName: "Jones", phoneNumber: "+15551230003" } });
+  await prisma.lead.create({ data: { name: "Jane Doe", phoneNumber: "+15551230001" } });
+  await prisma.lead.create({ data: { name: "Jane Smith", phoneNumber: "+15559990002" } });
+  await prisma.lead.create({ data: { name: "Bob Jones", phoneNumber: "+15551230003" } });
 }
 
 describe("leads search e2e (real Postgres)", () => {
@@ -37,10 +37,10 @@ describe("leads search e2e (real Postgres)", () => {
     await seed();
     const res = await request(app).get("/api/leads").query({ search: "jane" });
     expect(res.status).toBe(200);
-    const names = res.body.leads.map((l: { lastName: string }) => l.lastName).sort();
+    const names = res.body.leads.map((l: { name: string }) => l.name).sort();
     // Both Janes come back (same first name, different phone) - the picker
     // disambiguates them by the phone number it shows.
-    expect(names).toEqual(["Doe", "Smith"]);
+    expect(names).toEqual(["Jane Doe", "Jane Smith"]);
   });
 
   it("matches by last name and by a phone-number fragment", async () => {
@@ -48,7 +48,7 @@ describe("leads search e2e (real Postgres)", () => {
 
     const byLast = await request(app).get("/api/leads").query({ search: "jones" });
     expect(byLast.body.leads).toHaveLength(1);
-    expect(byLast.body.leads[0].firstName).toBe("Bob");
+    expect(byLast.body.leads[0].name).toBe("Bob Jones");
 
     // "123" appears in two of the three numbers.
     const byPhone = await request(app).get("/api/leads").query({ search: "123" });
@@ -66,8 +66,8 @@ describe("leads search e2e (real Postgres)", () => {
   });
 
   it("composes search with the status filter", async () => {
-    await prisma.lead.create({ data: { firstName: "Jane", phoneNumber: "+15551110001", status: "HOT" } });
-    await prisma.lead.create({ data: { firstName: "Jane", phoneNumber: "+15551110002", status: "COLD" } });
+    await prisma.lead.create({ data: { name: "Jane", phoneNumber: "+15551110001", status: "HOT" } });
+    await prisma.lead.create({ data: { name: "Jane", phoneNumber: "+15551110002", status: "COLD" } });
 
     const res = await request(app).get("/api/leads").query({ search: "jane", status: "HOT" });
     expect(res.body.leads).toHaveLength(1);
@@ -78,7 +78,7 @@ describe("leads search e2e (real Postgres)", () => {
     // 5 leads all matching "match", paged 2 at a time.
     await prisma.lead.createMany({
       data: Array.from({ length: 5 }, (_, i) => ({
-        firstName: "Match",
+        name: "Match",
         phoneNumber: `+1444${String(i).padStart(7, "0")}`,
       })),
     });

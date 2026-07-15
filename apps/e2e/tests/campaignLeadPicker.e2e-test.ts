@@ -28,7 +28,7 @@ beforeEach(async () => {
 describe("campaign from existing leads e2e (real Postgres)", () => {
   it("links an existing lead by id instead of creating a duplicate", async () => {
     const lead = await prisma.lead.create({
-      data: { phoneNumber: "+15551110001", firstName: "Existing", lastName: "Lead" },
+      data: { phoneNumber: "+15551110001", name: "Existing Lead" },
     });
 
     const res = await request(app)
@@ -51,7 +51,7 @@ describe("campaign from existing leads e2e (real Postgres)", () => {
       .send({
         name: "mixed campaign",
         script: "Ask about renewal",
-        contacts: [{ leadId: lead.id }, { phoneNumber: "+15551110003", firstName: "Typed" }],
+        contacts: [{ leadId: lead.id }, { phoneNumber: "+15551110003", name: "Typed" }],
       });
 
     expect(res.status).toBe(201);

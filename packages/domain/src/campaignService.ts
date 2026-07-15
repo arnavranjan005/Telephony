@@ -7,8 +7,7 @@ import { isWithinCallingHours, nextCallingWindowStart } from "./compliance/calli
 export interface CampaignContactInput {
   leadId?: string;
   phoneNumber?: string;
-  firstName?: string;
-  lastName?: string;
+  name?: string;
 }
 
 export interface CreateCampaignInput {
@@ -66,21 +65,20 @@ async function resolveContactLeadIds(
   consentGrantedAll?: boolean
 ): Promise<string[]> {
   const directLeadIds = new Set<string>();
-  const phoneContacts = new Map<string, { firstName?: string; lastName?: string }>();
+  const phoneContacts = new Map<string, { name?: string }>();
   for (const contact of contacts) {
     if (contact.leadId) {
       directLeadIds.add(contact.leadId);
     } else if (contact.phoneNumber && !phoneContacts.has(contact.phoneNumber)) {
-      phoneContacts.set(contact.phoneNumber, { firstName: contact.firstName, lastName: contact.lastName });
+      phoneContacts.set(contact.phoneNumber, { name: contact.name });
     }
   }
 
   if (phoneContacts.size > 0) {
     await tx.lead.createMany({
-      data: [...phoneContacts].map(([phoneNumber, name]) => ({
+      data: [...phoneContacts].map(([phoneNumber, contact]) => ({
         phoneNumber,
-        firstName: name.firstName,
-        lastName: name.lastName,
+        name: contact.name,
       })),
       skipDuplicates: true,
     });

@@ -78,7 +78,7 @@ beforeEach(async () => {
 
 describe("call lifecycle e2e (real Postgres + Redis)", () => {
   it("creates a lead via the real API against the real database", async () => {
-    const res = await request(app).post("/api/leads").send({ phoneNumber: "+15551234567", firstName: "Ada" });
+    const res = await request(app).post("/api/leads").send({ phoneNumber: "+15551234567", name: "Ada" });
 
     expect(res.status).toBe(201);
     expect(res.body.lead.phoneNumber).toBe("+15551234567");

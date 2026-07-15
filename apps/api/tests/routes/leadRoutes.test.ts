@@ -29,15 +29,15 @@ describe("Lead routes", () => {
   it("POST /api/leads creates a lead", async () => {
     leadCreate.mockResolvedValue({ id: "lead_1", phoneNumber: "+15551234567", status: "COLD" });
 
-    const res = await request(app).post("/api/leads").send({ phoneNumber: "+15551234567", firstName: "Jane" });
+    const res = await request(app).post("/api/leads").send({ phoneNumber: "+15551234567", name: "Jane" });
 
     expect(res.status).toBe(201);
     expect(res.body.lead).toEqual({ id: "lead_1", phoneNumber: "+15551234567", status: "COLD" });
-    expect(leadCreate).toHaveBeenCalledWith({ data: { phoneNumber: "+15551234567", firstName: "Jane" } });
+    expect(leadCreate).toHaveBeenCalledWith({ data: { phoneNumber: "+15551234567", name: "Jane" } });
   });
 
   it("POST /api/leads rejects a request missing the required phoneNumber", async () => {
-    const res = await request(app).post("/api/leads").send({ firstName: "Jane" });
+    const res = await request(app).post("/api/leads").send({ name: "Jane" });
 
     expect(res.status).toBe(400);
     expect(leadCreate).not.toHaveBeenCalled();

@@ -26,7 +26,7 @@ function describe(event: DashboardEvent): string {
   const data = event.data as Record<string, unknown> | null;
   if (!data) return "";
 
-  const lead = data.lead as { firstName?: string; lastName?: string; phoneNumber?: string } | undefined;
+  const lead = data.lead as { name?: string; phoneNumber?: string } | undefined;
   const call = data.call as { fromNumber?: string; toNumber?: string } | undefined;
   const campaign = data.campaign as { name?: string; status?: string } | undefined;
   const appointment = data.appointment as { title?: string; startTime?: string } | undefined;
@@ -38,7 +38,7 @@ function describe(event: DashboardEvent): string {
     const skipped = (Number(data.skippedDuplicates) || 0) + (Number(data.duplicatesInFile) || 0);
     return `${data.created} imported${skipped > 0 ? `, ${skipped} skipped` : ""}`;
   }
-  if (lead) return [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.phoneNumber || "";
+  if (lead) return lead.name || lead.phoneNumber || "";
   if (call) return call.fromNumber ? `${call.fromNumber} → ${call.toNumber}` : "";
   if (campaign) return `${campaign.name}${campaign.status ? ` (${campaign.status})` : ""}`;
   if (appointment) return appointment.title ?? "";

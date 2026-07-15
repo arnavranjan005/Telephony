@@ -118,7 +118,7 @@ describe("inbound call lifecycle e2e (real Postgres, mocked Telnyx)", () => {
   });
 
   it("reuses the existing Lead for a repeat caller instead of creating a duplicate", async () => {
-    const leadRes = await request(app).post("/api/leads").send({ phoneNumber: "+15556665555", firstName: "Repeat" });
+    const leadRes = await request(app).post("/api/leads").send({ phoneNumber: "+15556665555", name: "Repeat" });
     const existingLeadId = leadRes.body.lead.id;
 
     await telnyxWebhook("call.initiated", {

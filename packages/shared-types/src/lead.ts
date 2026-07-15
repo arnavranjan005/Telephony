@@ -10,8 +10,7 @@ export type ConsentStatus = (typeof ConsentStatusValues)[number];
 
 export interface Lead {
   id: string;
-  firstName: string | null;
-  lastName: string | null;
+  name: string | null;
   phoneNumber: string;
   email: string | null;
   status: LeadStatus;
@@ -40,8 +39,7 @@ export const LEADS_PAGE_SIZE = 50;
 export const LEADS_PAGE_SIZE_MAX = 200;
 
 export const createLeadSchema = z.object({
-  firstName: z.string().optional(),
-  lastName: z.string().optional(),
+  name: z.string().optional(),
   phoneNumber: z.string().min(1),
   email: z.string().email().optional(),
   status: z.enum(LeadStatusValues).optional(),

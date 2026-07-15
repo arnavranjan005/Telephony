@@ -79,7 +79,7 @@ export interface CsvParseResult {
   invalid: Array<{ line: number; reason: string }>;
 }
 
-const KNOWN_COLUMNS = ["firstname", "lastname", "phonenumber", "email", "status", "notes"] as const;
+const KNOWN_COLUMNS = ["name", "phonenumber", "email", "status", "notes"] as const;
 
 /** Maps a header cell to our canonical column key, tolerating spaces,
  * underscores and casing ("First Name", "phone_number", "PhoneNumber"). */
@@ -141,8 +141,7 @@ export function parseLeadsCsv(text: string): CsvParseResult {
     valid.push({
       line,
       lead: {
-        firstName: get("firstname") || undefined,
-        lastName: get("lastname") || undefined,
+        name: get("name") || undefined,
         phoneNumber,
         email,
         status,
@@ -156,5 +155,5 @@ export function parseLeadsCsv(text: string): CsvParseResult {
 
 /** The header + one example row shown by the "Download template" link. */
 export const LEAD_CSV_TEMPLATE =
-  "firstName,lastName,phoneNumber,email,status,notes\n" +
-  "Jane,Doe,+15551234567,jane@example.com,WARM,Met at conference\n";
+  "name,phoneNumber,email,status,notes\n" +
+  "Jane Doe,+15551234567,jane@example.com,WARM,Met at conference\n";

@@ -15,8 +15,7 @@ import { DEFAULT_OUTBOUND_OPENING_LINE, OBJECTION_HANDLING_BASELINE } from "../c
 const contactSchema = z.object({
   leadId: z.string().optional(),
   phoneNumber: z.string().optional(),
-  firstName: z.string().optional(),
-  lastName: z.string().optional(),
+  name: z.string().optional(),
 });
 
 const createCampaignSchema = z.object({

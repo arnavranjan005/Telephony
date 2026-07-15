@@ -39,7 +39,7 @@ async function flushFinishHandlers() {
 }
 
 describe("idempotency middleware (via POST /api/leads)", () => {
-  const body = { phoneNumber: "+15551234567", firstName: "Jane" };
+  const body = { phoneNumber: "+15551234567", name: "Jane" };
 
   it("proceeds normally when no Idempotency-Key header is sent", async () => {
     leadCreate.mockResolvedValue({ id: "lead_1", ...body });
