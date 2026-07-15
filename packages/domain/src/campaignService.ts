@@ -1,4 +1,4 @@
-import { CampaignContactStatus, CampaignStatus, ConsentStatus, prisma } from "@telephony/database";
+import { CampaignContactStatus, CampaignStatus, ConsentStatus, Prisma, prisma } from "@telephony/database";
 import { enqueueCampaignContactDial, enqueueCampaignContactDialAt } from "@telephony/queue";
 import { env } from "@telephony/config";
 import { placeOutboundCall } from "./outboundDialService";
@@ -45,16 +45,69 @@ export interface CreateCampaignInput {
 }
 
 /**
- * Creates a campaign and its contact list atomically, in a handful of bulk
- * queries rather than a per-contact upsert loop - so importing a large CSV of
- * contacts doesn't fan out into thousands of sequential round-trips.
+ * Resolves a mixed list of contacts (existing `leadId`s and/or `phoneNumber`s)
+ * to a de-duplicated array of lead ids, in a handful of bulk queries rather
+ * than a per-contact upsert loop - so importing a large CSV of contacts
+ * doesn't fan out into thousands of sequential round-trips.
  *
- * Contacts arrive as either an existing `leadId` (picked from the lead list)
- * or a `phoneNumber` (imported/typed). Phone contacts are resolved to leads
- * in three steps: createMany new leads (skipping numbers already in the DB),
- * findMany to get ids for the whole set (new *and* pre-existing - so an
- * already-existing lead is linked, not duplicated or dropped), then createMany
- * the campaign contacts. Either the whole set lands or none does.
+ * Phone contacts are resolved in two steps: createMany new leads (skipping
+ * numbers already in the DB), then findMany to get ids for the whole set (new
+ * *and* pre-existing - so an already-existing lead is linked, not duplicated
+ * or dropped). A number that appears twice - or once as a picked leadId and
+ * once by phone - only ever resolves to one id.
+ *
+ * When `consentGrantedAll` is set, grants TCPA consent to every resolved lead
+ * in one update (campaigns only auto-dial GRANTED leads), leaving already-
+ * granted leads' consentedAt untouched.
+ */
+async function resolveContactLeadIds(
+  tx: Prisma.TransactionClient,
+  contacts: CampaignContactInput[],
+  consentGrantedAll?: boolean
+): Promise<string[]> {
+  const directLeadIds = new Set<string>();
+  const phoneContacts = new Map<string, { firstName?: string; lastName?: string }>();
+  for (const contact of contacts) {
+    if (contact.leadId) {
+      directLeadIds.add(contact.leadId);
+    } else if (contact.phoneNumber && !phoneContacts.has(contact.phoneNumber)) {
+      phoneContacts.set(contact.phoneNumber, { firstName: contact.firstName, lastName: contact.lastName });
+    }
+  }
+
+  if (phoneContacts.size > 0) {
+    await tx.lead.createMany({
+      data: [...phoneContacts].map(([phoneNumber, name]) => ({
+        phoneNumber,
+        firstName: name.firstName,
+        lastName: name.lastName,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  const resolved =
+    phoneContacts.size > 0
+      ? await tx.lead.findMany({
+          where: { phoneNumber: { in: [...phoneContacts.keys()] } },
+          select: { id: true },
+        })
+      : [];
+  const leadIds = [...new Set([...directLeadIds, ...resolved.map((l) => l.id)])];
+
+  if (consentGrantedAll && leadIds.length > 0) {
+    await tx.lead.updateMany({
+      where: { id: { in: leadIds }, consentStatus: { not: ConsentStatus.GRANTED } },
+      data: { consentStatus: ConsentStatus.GRANTED, consentSource: "campaign", consentedAt: new Date() },
+    });
+  }
+
+  return leadIds;
+}
+
+/**
+ * Creates a campaign and its contact list atomically - either the whole
+ * contact set lands or none does.
  */
 export async function createCampaign(input: CreateCampaignInput) {
   const campaign = await prisma.$transaction(async (tx) => {
@@ -68,55 +121,8 @@ export async function createCampaign(input: CreateCampaignInput) {
       },
     });
 
-    // Split contacts and de-dupe phone contacts up front (keeping the first
-    // occurrence's name), so a number that appears twice - or once as a
-    // picked lead and once by phone - only ever becomes one contact.
-    const directLeadIds = new Set<string>();
-    const phoneContacts = new Map<string, { firstName?: string; lastName?: string }>();
-    for (const contact of input.contacts) {
-      if (contact.leadId) {
-        directLeadIds.add(contact.leadId);
-      } else if (contact.phoneNumber && !phoneContacts.has(contact.phoneNumber)) {
-        phoneContacts.set(contact.phoneNumber, { firstName: contact.firstName, lastName: contact.lastName });
-      }
-    }
+    const leadIds = await resolveContactLeadIds(tx, input.contacts, input.consentGrantedAll);
 
-    // 1. Create the leads for new phone numbers in one insert; existing
-    //    numbers (unique phoneNumber) are skipped, not errored.
-    if (phoneContacts.size > 0) {
-      await tx.lead.createMany({
-        data: [...phoneContacts].map(([phoneNumber, name]) => ({
-          phoneNumber,
-          firstName: name.firstName,
-          lastName: name.lastName,
-        })),
-        skipDuplicates: true,
-      });
-    }
-
-    // 2. Resolve every phone number to a lead id - the ones just created and
-    //    the ones that already existed.
-    const resolved =
-      phoneContacts.size > 0
-        ? await tx.lead.findMany({
-            where: { phoneNumber: { in: [...phoneContacts.keys()] } },
-            select: { id: true },
-          })
-        : [];
-    const leadIds = [...new Set([...directLeadIds, ...resolved.map((l) => l.id)])];
-
-    // Consent (opt-in): campaigns only auto-dial GRANTED leads, so when the
-    // toggle is on, grant consent to every lead in the campaign in one update -
-    // including picked and pre-existing ones. Leave already-granted leads'
-    // consentedAt untouched.
-    if (input.consentGrantedAll && leadIds.length > 0) {
-      await tx.lead.updateMany({
-        where: { id: { in: leadIds }, consentStatus: { not: ConsentStatus.GRANTED } },
-        data: { consentStatus: ConsentStatus.GRANTED, consentSource: "campaign", consentedAt: new Date() },
-      });
-    }
-
-    // 3. Link them all to the campaign in one insert.
     if (leadIds.length > 0) {
       await tx.campaignContact.createMany({
         data: leadIds.map((leadId) => ({ campaignId: created.id, leadId })),
@@ -128,6 +134,84 @@ export async function createCampaign(input: CreateCampaignInput) {
   });
 
   return getCampaign(campaign.id);
+}
+
+/** Thrown by addContactsToCampaign when the target campaign has already left
+ * DRAFT - once a campaign is dialing (or done), its contact list is no
+ * longer something a plain "add more contacts" call can safely change. */
+export class CampaignNotDraftError extends Error {
+  constructor(status: string) {
+    super(`Campaign is ${status}, not DRAFT - contacts can only be added to a campaign before it starts`);
+    this.name = "CampaignNotDraftError";
+  }
+}
+
+export interface AddCampaignContactsResult {
+  campaign: NonNullable<Awaited<ReturnType<typeof getCampaign>>>;
+  /** New campaign-contact links created. */
+  added: number;
+  /** Resolved leads that already had a contact row in this campaign - the
+   * @@unique([campaignId, leadId]) constraint makes createMany's
+   * skipDuplicates skip these rather than erroring or double-linking. */
+  alreadyInCampaign: number;
+}
+
+/**
+ * Adds more contacts to an existing DRAFT campaign - e.g. from a lead CSV
+ * import elsewhere in the app that the user wants attached to a campaign
+ * they've already drafted, rather than re-picking those leads by hand.
+ *
+ * Restricted to DRAFT: a RUNNING/PAUSED campaign's contacts are mid dial-
+ * queue, and appending to that queue live needs different handling (e.g.
+ * immediately enqueuing dials) that this function doesn't attempt.
+ *
+ * Returns null if the campaign doesn't exist, so the caller can 404. Throws
+ * CampaignNotDraftError if it exists but isn't DRAFT, so the caller can 409.
+ */
+export async function addContactsToCampaign(
+  campaignId: string,
+  contacts: CampaignContactInput[],
+  consentGrantedAll?: boolean
+): Promise<AddCampaignContactsResult | null> {
+  const outcome = await prisma.$transaction(async (tx) => {
+    // Atomically verify - and, for the rest of this transaction, hold via the
+    // row lock this UPDATE takes - that the campaign is still DRAFT. A plain
+    // read-then-branch here would leave a window where a concurrent
+    // startCampaign() (a separate, unwrapped update + "enqueue every PENDING
+    // contact" read) could run between the check and the contacts actually
+    // landing: it would flip status to RUNNING and read pending contacts
+    // without ever seeing the ones this call is about to insert, stranding
+    // them as PENDING on a RUNNING campaign until some future restart. This
+    // conditional updateMany mirrors completeCampaignIfExhausted's atomic
+    // status flip above - the same idiom applied to a status *gate* instead
+    // of a status *transition*: startCampaign's own update to the same row
+    // has to wait for this transaction to finish, so it can only run either
+    // fully before this claim (and this call then correctly sees non-DRAFT)
+    // or fully after this transaction commits (and its contact query then
+    // sees the new contacts already inserted).
+    const claimed = await tx.campaign.updateMany({
+      where: { id: campaignId, status: CampaignStatus.DRAFT },
+      data: { updatedAt: new Date() },
+    });
+    if (claimed.count === 0) {
+      const campaign = await tx.campaign.findUnique({ where: { id: campaignId } });
+      if (!campaign) return null;
+      throw new CampaignNotDraftError(campaign.status);
+    }
+
+    const leadIds = await resolveContactLeadIds(tx, contacts, consentGrantedAll);
+    if (leadIds.length === 0) return { added: 0, alreadyInCampaign: 0 };
+
+    const { count } = await tx.campaignContact.createMany({
+      data: leadIds.map((leadId) => ({ campaignId, leadId })),
+      skipDuplicates: true,
+    });
+    return { added: count, alreadyInCampaign: leadIds.length - count };
+  });
+
+  if (!outcome) return null;
+  const campaign = await getCampaign(campaignId);
+  return { campaign: campaign!, added: outcome.added, alreadyInCampaign: outcome.alreadyInCampaign };
 }
 
 export async function listCampaigns() {
