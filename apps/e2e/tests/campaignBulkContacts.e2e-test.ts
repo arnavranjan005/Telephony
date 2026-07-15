@@ -93,6 +93,25 @@ describe("campaign bulk contacts e2e (real Postgres)", () => {
     expect(lead.consentStatus).toBe(ConsentStatus.UNKNOWN);
   });
 
+  it("sanitizes a loosely-formatted contact phone number to E.164 before saving", async () => {
+    const res = await request(app)
+      .post("/api/campaigns")
+      .send({ name: "sanitize", script: "Ask", contacts: [{ phoneNumber: "+1 337-368-6335", name: "Daigle Roofing" }] });
+
+    expect(res.status).toBe(201);
+    const lead = await prisma.lead.findUniqueOrThrow({ where: { phoneNumber: "+13373686335" } });
+    expect(lead.name).toBe("Daigle Roofing");
+  });
+
+  it("rejects a contact phone number that isn't valid E.164 after sanitizing", async () => {
+    const res = await request(app)
+      .post("/api/campaigns")
+      .send({ name: "bad number", script: "Ask", contacts: [{ phoneNumber: "337-368-6335" }] });
+
+    expect(res.status).toBe(400);
+    expect(await prisma.lead.count()).toBe(0);
+  });
+
   it("handles a large contact list in one create (bulk, not per-row)", async () => {
     const contacts = Array.from({ length: 250 }, (_, i) => ({ phoneNumber: `+1557${String(i).padStart(7, "0")}` }));
     const res = await request(app)

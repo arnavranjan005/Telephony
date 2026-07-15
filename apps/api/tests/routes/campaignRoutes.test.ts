@@ -74,6 +74,31 @@ describe("Campaign routes", () => {
     );
   });
 
+  it("POST /api/campaigns sanitizes contact phone numbers to E.164 before saving", async () => {
+    createCampaign.mockResolvedValue({ id: "camp_1", name: "Spring outreach" });
+
+    await request(app)
+      .post("/api/campaigns")
+      .send({
+        name: "Spring outreach",
+        script: "Ask about renewal",
+        contacts: [{ phoneNumber: "+1 337-368-6335" }],
+      });
+
+    expect(createCampaign).toHaveBeenCalledWith(
+      expect.objectContaining({ contacts: [{ phoneNumber: "+13373686335" }] })
+    );
+  });
+
+  it("POST /api/campaigns rejects a contact phone number that isn't valid E.164 after sanitizing", async () => {
+    const res = await request(app)
+      .post("/api/campaigns")
+      .send({ name: "Spring outreach", script: "Ask about renewal", contacts: [{ phoneNumber: "337-368-6335" }] });
+
+    expect(res.status).toBe(400);
+    expect(createCampaign).not.toHaveBeenCalled();
+  });
+
   it("POST /api/campaigns rejects a request missing name", async () => {
     const res = await request(app).post("/api/campaigns").send({ script: "Ask about renewal", contacts: [] });
     expect(res.status).toBe(400);

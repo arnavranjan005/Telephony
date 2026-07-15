@@ -4,6 +4,7 @@ import { prisma, LeadStatus, ConsentStatus, Prisma } from "@telephony/database";
 import { recordConsent, revokeConsent } from "@telephony/domain";
 import {
   bulkCreateLeadsSchema,
+  phoneNumberSchema,
   LEADS_PAGE_SIZE,
   LEADS_PAGE_SIZE_MAX,
   type BulkCreateLeadRow,
@@ -13,7 +14,7 @@ import { callEventBus } from "../sse/eventBus";
 
 const createLeadSchema = z.object({
   name: z.string().optional(),
-  phoneNumber: z.string().min(1),
+  phoneNumber: phoneNumberSchema,
   email: z.string().email().optional(),
   status: z.nativeEnum(LeadStatus).optional(),
   notes: z.string().optional(),
@@ -156,7 +157,7 @@ export async function getLead(req: Request, res: Response) {
 }
 
 const updateLeadSchema = createLeadSchema.partial().omit({ phoneNumber: true }).extend({
-  phoneNumber: z.string().min(1).optional(),
+  phoneNumber: phoneNumberSchema.optional(),
 });
 
 export async function updateLead(req: Request, res: Response) {

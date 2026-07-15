@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Call } from "./call";
 import type { Appointment } from "./appointment";
+import { phoneNumberSchema } from "./phone";
 
 export const LeadStatusValues = ["COLD", "WARM", "HOT"] as const;
 export type LeadStatus = (typeof LeadStatusValues)[number];
@@ -40,7 +41,7 @@ export const LEADS_PAGE_SIZE_MAX = 200;
 
 export const createLeadSchema = z.object({
   name: z.string().optional(),
-  phoneNumber: z.string().min(1),
+  phoneNumber: phoneNumberSchema,
   email: z.string().email().optional(),
   status: z.enum(LeadStatusValues).optional(),
   notes: z.string().optional(),
@@ -51,7 +52,7 @@ export const createLeadSchema = z.object({
 export type CreateLeadInput = z.infer<typeof createLeadSchema>;
 
 export const updateLeadSchema = createLeadSchema.partial().omit({ phoneNumber: true }).extend({
-  phoneNumber: z.string().min(1).optional(),
+  phoneNumber: phoneNumberSchema.optional(),
 });
 export type UpdateLeadInput = z.infer<typeof updateLeadSchema>;
 

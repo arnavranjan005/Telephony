@@ -9,12 +9,13 @@ import {
   pauseCampaign,
   startCampaign,
 } from "@telephony/domain";
+import { phoneNumberSchema } from "@telephony/shared-types";
 import { callEventBus } from "../sse/eventBus";
 import { DEFAULT_OUTBOUND_OPENING_LINE, OBJECTION_HANDLING_BASELINE } from "../callConversationService";
 
 const contactSchema = z.object({
   leadId: z.string().optional(),
-  phoneNumber: z.string().optional(),
+  phoneNumber: phoneNumberSchema.optional(),
   name: z.string().optional(),
 });
 

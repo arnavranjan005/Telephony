@@ -8,6 +8,18 @@ import type { BulkCreateLeadRow, LeadStatus } from "@telephony/shared-types";
 // LeadStatusValues in @telephony/shared-types.
 const LEAD_STATUS_VALUES: LeadStatus[] = ["COLD", "WARM", "HOT"];
 
+// Same reasoning as above - duplicated rather than imported at runtime.
+// Source of truth is sanitizePhoneNumber/isE164 in @telephony/shared-types.
+function sanitizePhoneNumber(raw: string): string {
+  const trimmed = raw.trim();
+  const digits = trimmed.replace(/\D/g, "");
+  return trimmed.startsWith("+") ? `+${digits}` : digits;
+}
+const E164_PATTERN = /^\+[1-9]\d{1,14}$/;
+function isE164(phoneNumber: string): boolean {
+  return E164_PATTERN.test(phoneNumber);
+}
+
 /**
  * Minimal RFC-4180-ish CSV parser: handles quoted fields, commas and
  * newlines inside quotes, and "" escaped quotes. Enough for the lead-import
@@ -115,9 +127,17 @@ export function parseLeadsCsv(text: string): CsvParseResult {
       return idx === -1 ? undefined : cells[idx]?.trim();
     };
 
-    const phoneNumber = cells[phoneIdx]?.trim();
-    if (!phoneNumber) {
+    const rawPhoneNumber = cells[phoneIdx]?.trim();
+    if (!rawPhoneNumber) {
       invalid.push({ line, reason: "Missing phone number" });
+      continue;
+    }
+    const phoneNumber = sanitizePhoneNumber(rawPhoneNumber);
+    if (!isE164(phoneNumber)) {
+      invalid.push({
+        line,
+        reason: `Invalid phone number "${rawPhoneNumber}" (expected E.164, e.g. +15551234567)`,
+      });
       continue;
     }
 

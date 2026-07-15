@@ -1,4 +1,5 @@
 export * from "./lead";
+export * from "./phone";
 export * from "./call";
 export * from "./campaign";
 export * from "./followUp";

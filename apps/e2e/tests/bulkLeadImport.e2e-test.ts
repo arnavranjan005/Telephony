@@ -98,6 +98,24 @@ describe("bulk lead import e2e (real Postgres)", () => {
     expect(kept.name).toBe("First");
   });
 
+  it("sanitizes loosely-formatted phone numbers to E.164 before saving", async () => {
+    const leads = [{ name: "Daigle Roofing", phoneNumber: "+1 337-368-6335" }];
+    const res = await request(app).post("/api/leads/bulk").send({ leads });
+
+    expect(res.status).toBe(201);
+    expect(res.body.created).toBe(1);
+    const row = await prisma.lead.findUniqueOrThrow({ where: { phoneNumber: "+13373686335" } });
+    expect(row.name).toBe("Daigle Roofing");
+  });
+
+  it("rejects the whole batch if a phone number isn't valid E.164 after sanitizing", async () => {
+    const leads = [{ phoneNumber: "+15555550001" }, { phoneNumber: "337-368-6335" }];
+    const res = await request(app).post("/api/leads/bulk").send({ leads });
+
+    expect(res.status).toBe(400);
+    expect(await prisma.lead.count()).toBe(0);
+  });
+
   it("rejects an empty batch and a batch over the row cap", async () => {
     const empty = await request(app).post("/api/leads/bulk").send({ leads: [] });
     expect(empty.status).toBe(400);
