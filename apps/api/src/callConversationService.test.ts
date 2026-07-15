@@ -20,6 +20,7 @@ jest.mock("./conversationHistory", () => ({
 
 import {
   buildSystemPrompt,
+  LEAD_IDENTITY_GUIDANCE,
   OBJECTION_HANDLING_BASELINE,
   resolveGreeting,
   SYSTEM_PROMPT,
@@ -29,6 +30,12 @@ import {
 describe("OBJECTION_HANDLING_BASELINE", () => {
   it("is embedded in SYSTEM_PROMPT so every call gets it by default", () => {
     expect(SYSTEM_PROMPT).toContain(OBJECTION_HANDLING_BASELINE);
+  });
+});
+
+describe("LEAD_IDENTITY_GUIDANCE", () => {
+  it("is embedded in SYSTEM_PROMPT so every call gets it by default, not just after a get_lead_details call", () => {
+    expect(SYSTEM_PROMPT).toContain(LEAD_IDENTITY_GUIDANCE);
   });
 });
 
