@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import type { DashboardEvent, Lead, LeadStatus, LeadWithDetails } from "@telephony/shared-types";
+import type { Campaign, DashboardEvent, Lead, LeadStatus, LeadWithDetails } from "@telephony/shared-types";
 import { apiClient } from "@/lib/apiClient";
 import { useEventStream } from "@/hooks/useEventStream";
 import { StatusBadge } from "@/components/status-badge";
@@ -282,11 +282,24 @@ function ImportLeadsDialog({
   const [submitting, setSubmitting] = useState(false);
   // Bumped on reset to remount the dropzone and clear its internal file state.
   const [dropzoneKey, setDropzoneKey] = useState(0);
+  // Optional: also attach the imported leads to a campaign that's been
+  // drafted but not started yet. "" means "don't assign to a campaign".
+  const [draftCampaigns, setDraftCampaigns] = useState<Campaign[]>([]);
+  const [assignCampaignId, setAssignCampaignId] = useState<string>("");
+
+  useEffect(() => {
+    if (!open) return;
+    apiClient
+      .listCampaigns()
+      .then((data) => setDraftCampaigns(data.campaigns.filter((c) => c.status === "DRAFT")))
+      .catch(() => {});
+  }, [open]);
 
   function reset() {
     setParsed(null);
     setConsentGrantedAll(false);
     setDropzoneKey((k) => k + 1);
+    setAssignCampaignId("");
   }
 
   const validCount = parsed?.valid.length ?? 0;
@@ -313,6 +326,32 @@ function ImportLeadsDialog({
       const skipped = result.skippedDuplicates + result.duplicatesInFile;
       if (skipped > 0) parts.push(`${skipped} duplicate${skipped === 1 ? "" : "s"} skipped`);
       if (invalidCount > 0) parts.push(`${invalidCount} invalid row${invalidCount === 1 ? "" : "s"} ignored`);
+
+      // Attaching to a campaign is a separate follow-up call (not baked into
+      // the import itself) so a campaign that started dialing between
+      // opening this dialog and clicking Import doesn't block the leads
+      // from being imported - only the attach step fails, reported on its
+      // own rather than losing the import.
+      if (assignCampaignId) {
+        try {
+          const campaignName = draftCampaigns.find((c) => c.id === assignCampaignId)?.name ?? "the campaign";
+          const attach = await apiClient.addCampaignContacts(assignCampaignId, {
+            contacts: parsed.valid.map((r) => r.lead),
+          });
+          parts.push(`${attach.added} added to ${campaignName}`);
+          if (attach.alreadyInCampaign > 0) parts.push(`${attach.alreadyInCampaign} already in it`);
+        } catch (attachErr) {
+          toast.error(
+            attachErr instanceof Error
+              ? `Leads imported, but couldn't add to campaign: ${attachErr.message}`
+              : "Leads imported, but adding them to the campaign failed"
+          );
+          reset();
+          onImported();
+          return;
+        }
+      }
+
       toast.success(parts.join(", "));
       reset();
       onImported();
@@ -415,6 +454,33 @@ function ImportLeadsDialog({
               </p>
             </div>
             <Switch checked={consentGrantedAll} onCheckedChange={setConsentGrantedAll} />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label>Also add to a draft campaign (optional)</Label>
+            <Select
+              value={assignCampaignId || "none"}
+              onValueChange={(value) => setAssignCampaignId(value === "none" ? "" : (value ?? ""))}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="None">
+                  {(value: string | null) =>
+                    !value || value === "none" ? "None" : (draftCampaigns.find((c) => c.id === value)?.name ?? "None")
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                {draftCampaigns.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {draftCampaigns.length === 0 && (
+              <p className="text-xs text-muted-foreground">No draft campaigns yet - only campaigns that haven't started can accept more contacts.</p>
+            )}
           </div>
         </div>
 

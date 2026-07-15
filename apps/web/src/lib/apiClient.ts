@@ -1,4 +1,6 @@
 import type {
+  AddCampaignContactsInput,
+  AddCampaignContactsResult,
   Appointment,
   AppointmentStatus,
   AppointmentWithLead,
@@ -96,6 +98,11 @@ export const apiClient = {
   getCampaign: (campaignId: string) => apiFetch<{ campaign: CampaignWithContacts }>(`/api/campaigns/${campaignId}`),
   createCampaign: (input: CreateCampaignInput) =>
     apiFetch<{ campaign: CampaignWithContacts }>("/api/campaigns", { method: "POST", body: JSON.stringify(input) }),
+  addCampaignContacts: (campaignId: string, input: AddCampaignContactsInput) =>
+    apiFetch<AddCampaignContactsResult>(`/api/campaigns/${campaignId}/contacts`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
   startCampaign: (campaignId: string) =>
     apiFetch<{ campaign: Campaign }>(`/api/campaigns/${campaignId}/start`, { method: "POST" }),
   pauseCampaign: (campaignId: string) =>
