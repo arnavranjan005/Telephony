@@ -119,7 +119,13 @@ export const EVAL_CASES: EvalCase[] = [
     messages: [
       { role: "user", content: "Can you book me a quick call in about 5 minutes from now?" },
     ],
-    expectedToolCalls: [{ name: "check_appointment_availability" }],
+    // Bare opening turn with no lead identity established yet - get_lead_details is a fair
+    // first move now that it exists (see leadTools.ts), so this is asserted as a chain rather
+    // than a single-turn call, same as the booking chain case below.
+    chain: {
+      stubResults: {},
+      expectedOrder: ["check_appointment_availability"],
+    },
   },
   {
     // Ends on a tool result (like the booking case above) rather than a bare
@@ -232,7 +238,11 @@ export const EVAL_CASES: EvalCase[] = [
     messages: [
       { role: "user", content: "Yes, I'm very interested and ready to buy right now, let's move forward today." },
     ],
-    expectedToolCalls: [{ name: "update_lead_status", args: { status: "HOT" } }],
+    // Bare opening turn - see the near-term booking case above for why this is a chain now.
+    chain: {
+      stubResults: { update_lead_status: { updated: true, leadId: "eval-lead", status: "HOT" } },
+      expectedOrder: ["update_lead_status"],
+    },
   },
   {
     name: "callback request schedules a follow-up",
@@ -243,8 +253,12 @@ export const EVAL_CASES: EvalCase[] = [
     ],
     // Args deliberately unconstrained - the point is the model chooses to
     // schedule a callback at all, not that it computes a particular ISO
-    // timestamp for "tomorrow afternoon" the same way every run.
-    expectedToolCalls: [{ name: "schedule_followup" }],
+    // timestamp for "tomorrow afternoon" the same way every run. Bare opening
+    // turn - see the near-term booking case above for why this is a chain now.
+    chain: {
+      stubResults: {},
+      expectedOrder: ["schedule_followup"],
+    },
   },
   {
     // "cancel the earlier action first ... before completing the new
