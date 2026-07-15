@@ -329,7 +329,7 @@ function CreateCampaignDialog({
     (acc, c) => ({ ...acc, [c.source]: acc[c.source] + 1 }),
     { csv: 0, lead: 0, manual: 0 } as Record<StagedContact["source"], number>
   );
-  const SOURCE_LABEL: Record<StagedContact["source"], string> = { csv: "CSV", lead: "Lead", manual: "Manual" };
+  const SOURCE_LABEL: Record<StagedContact["source"], string> = { csv: "CSV", lead: "Picker", manual: "Manual" };
 
   return (
     <Dialog
@@ -504,7 +504,7 @@ function CreateCampaignDialog({
                 <span className="ml-auto text-[11px] text-muted-foreground">
                   {[
                     sourceCounts.csv && `${sourceCounts.csv} CSV`,
-                    sourceCounts.lead && `${sourceCounts.lead} lead`,
+                    sourceCounts.lead && `${sourceCounts.lead} picker`,
                     sourceCounts.manual && `${sourceCounts.manual} manual`,
                   ]
                     .filter(Boolean)
