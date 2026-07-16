@@ -67,3 +67,12 @@ export interface AddCampaignContactsResult {
   /** Resolved leads that already had a contact row in this campaign. */
   alreadyInCampaign: number;
 }
+
+export interface DeleteCampaignLeadsResult {
+  campaign: CampaignWithContacts;
+  /** Leads permanently deleted. */
+  deleted: number;
+  /** Leads left untouched because they have call/appointment/follow-up
+   * history or are attached to another campaign too. */
+  skipped: number;
+}

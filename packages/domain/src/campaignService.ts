@@ -212,6 +212,92 @@ export async function addContactsToCampaign(
   return { campaign: campaign!, added: outcome.added, alreadyInCampaign: outcome.alreadyInCampaign };
 }
 
+export interface DeleteCampaignLeadsResult {
+  campaign: NonNullable<Awaited<ReturnType<typeof getCampaign>>>;
+  /** Leads actually deleted. */
+  deleted: number;
+  /** Leads left untouched - either attached to another campaign too, or with
+   * call/appointment/follow-up history - and why each was skipped. */
+  skipped: number;
+}
+
+/**
+ * Permanently deletes every lead attached to a DRAFT campaign - e.g. cleaning
+ * up a throwaway import or a campaign that was drafted by mistake - rather
+ * than just detaching them (which addContactsToCampaign's inverse would do).
+ *
+ * Only deletes a lead if it's "clean": no calls, appointments, or follow-ups,
+ * and this campaign is the only one it's attached to. Postgres itself would
+ * reject deleting a lead that still has any of those (no cascade is
+ * configured on those relations on purpose - see schema.prisma), but the
+ * check happens up front so a lead with real history is silently left alone
+ * instead of the whole batch erroring out. A lead skipped this way keeps its
+ * contact row on this campaign too, since deleting the attachment but not
+ * the lead would just be a confusing partial no-op.
+ *
+ * Restricted to DRAFT for the same reason as addContactsToCampaign: a
+ * RUNNING/PAUSED campaign's contacts are mid dial-queue, and deleting leads
+ * out from under an active dial needs different handling this doesn't
+ * attempt.
+ *
+ * Returns null if the campaign doesn't exist, so the caller can 404. Throws
+ * CampaignNotDraftError if it exists but isn't DRAFT, so the caller can 409.
+ */
+export async function deleteCampaignLeads(campaignId: string): Promise<DeleteCampaignLeadsResult | null> {
+  const outcome = await prisma.$transaction(async (tx) => {
+    // Same atomic DRAFT claim as addContactsToCampaign above - without it, a
+    // concurrent startCampaign() could enqueue dials for leads this
+    // transaction is about to delete.
+    const claimed = await tx.campaign.updateMany({
+      where: { id: campaignId, status: CampaignStatus.DRAFT },
+      data: { updatedAt: new Date() },
+    });
+    if (claimed.count === 0) {
+      const campaign = await tx.campaign.findUnique({ where: { id: campaignId } });
+      if (!campaign) return null;
+      throw new CampaignNotDraftError(campaign.status);
+    }
+
+    const contacts = await tx.campaignContact.findMany({ where: { campaignId }, select: { leadId: true } });
+    const leadIds = contacts.map((c) => c.leadId);
+    if (leadIds.length === 0) return { deleted: 0, skipped: 0 };
+
+    const leads = await tx.lead.findMany({
+      where: { id: { in: leadIds } },
+      select: {
+        id: true,
+        _count: { select: { calls: true, appointments: true, followUps: true, campaignContacts: true } },
+      },
+    });
+
+    // campaignContacts === 1 means this campaign is the only one it's in -
+    // every lead here has at least this one contact row, so 1 is "none else".
+    const cleanLeadIds = leads
+      .filter(
+        (lead) =>
+          lead._count.calls === 0 &&
+          lead._count.appointments === 0 &&
+          lead._count.followUps === 0 &&
+          lead._count.campaignContacts === 1
+      )
+      .map((lead) => lead.id);
+
+    if (cleanLeadIds.length > 0) {
+      // The contact row itself blocks lead deletion via FK (no cascade from
+      // CampaignContact.lead - see schema.prisma) even for this campaign, so
+      // it has to go first.
+      await tx.campaignContact.deleteMany({ where: { campaignId, leadId: { in: cleanLeadIds } } });
+      await tx.lead.deleteMany({ where: { id: { in: cleanLeadIds } } });
+    }
+
+    return { deleted: cleanLeadIds.length, skipped: leadIds.length - cleanLeadIds.length };
+  });
+
+  if (!outcome) return null;
+  const campaign = await getCampaign(campaignId);
+  return { campaign: campaign!, deleted: outcome.deleted, skipped: outcome.skipped };
+}
+
 export async function listCampaigns() {
   return prisma.campaign.findMany({ orderBy: { createdAt: "desc" } });
 }

@@ -10,10 +10,13 @@ const campaignContactUpdate = jest.fn();
 const campaignContactFindUniqueOrThrow = jest.fn();
 const campaignContactCount = jest.fn();
 const campaignContactCreateMany = jest.fn();
+const campaignContactFindManyTx = jest.fn();
+const campaignContactDeleteMany = jest.fn();
 const leadUpsert = jest.fn();
 const leadCreateMany = jest.fn();
 const leadFindMany = jest.fn();
 const leadUpdateMany = jest.fn();
+const leadDeleteMany = jest.fn();
 
 function makeTx() {
   return {
@@ -25,12 +28,15 @@ function makeTx() {
     campaignContact: {
       create: (...args: unknown[]) => campaignContactCreate(...args),
       createMany: (...args: unknown[]) => campaignContactCreateMany(...args),
+      findMany: (...args: unknown[]) => campaignContactFindManyTx(...args),
+      deleteMany: (...args: unknown[]) => campaignContactDeleteMany(...args),
     },
     lead: {
       upsert: (...args: unknown[]) => leadUpsert(...args),
       createMany: (...args: unknown[]) => leadCreateMany(...args),
       findMany: (...args: unknown[]) => leadFindMany(...args),
       updateMany: (...args: unknown[]) => leadUpdateMany(...args),
+      deleteMany: (...args: unknown[]) => leadDeleteMany(...args),
     },
   };
 }
@@ -96,6 +102,7 @@ import {
   addContactsToCampaign,
   CampaignNotDraftError,
   createCampaign,
+  deleteCampaignLeads,
   processCampaignContactJob,
   startCampaign,
 } from "./campaignService";
@@ -350,6 +357,85 @@ describe("campaignService", () => {
         where: { id: { in: ["lead_new"] }, consentStatus: { not: "GRANTED" } },
         data: { consentStatus: "GRANTED", consentSource: "campaign", consentedAt: expect.any(Date) },
       });
+    });
+  });
+
+  describe("deleteCampaignLeads", () => {
+    it("returns null when the campaign doesn't exist, without writing anything", async () => {
+      campaignUpdateMany.mockResolvedValue({ count: 0 });
+      campaignFindUnique.mockResolvedValue(null);
+
+      const result = await deleteCampaignLeads("camp_missing");
+
+      expect(result).toBeNull();
+      expect(campaignContactFindManyTx).not.toHaveBeenCalled();
+      expect(leadDeleteMany).not.toHaveBeenCalled();
+    });
+
+    it("throws CampaignNotDraftError for a campaign that already started, without writing anything", async () => {
+      campaignUpdateMany.mockResolvedValue({ count: 0 });
+      campaignFindUnique.mockResolvedValue({ id: "camp_1", status: "RUNNING" });
+
+      await expect(deleteCampaignLeads("camp_1")).rejects.toThrow(CampaignNotDraftError);
+      expect(campaignContactFindManyTx).not.toHaveBeenCalled();
+      expect(leadDeleteMany).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op when the campaign has no contacts", async () => {
+      campaignUpdateMany.mockResolvedValue({ count: 1 });
+      campaignContactFindManyTx.mockResolvedValue([]);
+      campaignFindUnique.mockResolvedValue({ id: "camp_1", status: "DRAFT", contacts: [] });
+
+      const result = await deleteCampaignLeads("camp_1");
+
+      expect(result).toMatchObject({ deleted: 0, skipped: 0 });
+      expect(leadFindMany).not.toHaveBeenCalled();
+      expect(leadDeleteMany).not.toHaveBeenCalled();
+    });
+
+    it("deletes leads with no history that are only attached to this campaign", async () => {
+      campaignUpdateMany.mockResolvedValue({ count: 1 });
+      campaignContactFindManyTx.mockResolvedValue([{ leadId: "lead_1" }, { leadId: "lead_2" }]);
+      leadFindMany.mockResolvedValue([
+        { id: "lead_1", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 1 } },
+        { id: "lead_2", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 1 } },
+      ]);
+      campaignFindUnique.mockResolvedValue({ id: "camp_1", status: "DRAFT", contacts: [] });
+
+      const result = await deleteCampaignLeads("camp_1");
+
+      expect(campaignContactDeleteMany).toHaveBeenCalledWith({
+        where: { campaignId: "camp_1", leadId: { in: ["lead_1", "lead_2"] } },
+      });
+      expect(leadDeleteMany).toHaveBeenCalledWith({ where: { id: { in: ["lead_1", "lead_2"] } } });
+      expect(result).toMatchObject({ deleted: 2, skipped: 0 });
+    });
+
+    it("skips a lead with call history, an appointment, a follow-up, or another campaign attachment", async () => {
+      campaignUpdateMany.mockResolvedValue({ count: 1 });
+      campaignContactFindManyTx.mockResolvedValue([
+        { leadId: "lead_clean" },
+        { leadId: "lead_has_call" },
+        { leadId: "lead_has_appt" },
+        { leadId: "lead_has_followup" },
+        { leadId: "lead_in_other_campaign" },
+      ]);
+      leadFindMany.mockResolvedValue([
+        { id: "lead_clean", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 1 } },
+        { id: "lead_has_call", _count: { calls: 1, appointments: 0, followUps: 0, campaignContacts: 1 } },
+        { id: "lead_has_appt", _count: { calls: 0, appointments: 1, followUps: 0, campaignContacts: 1 } },
+        { id: "lead_has_followup", _count: { calls: 0, appointments: 0, followUps: 1, campaignContacts: 1 } },
+        { id: "lead_in_other_campaign", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 2 } },
+      ]);
+      campaignFindUnique.mockResolvedValue({ id: "camp_1", status: "DRAFT", contacts: [] });
+
+      const result = await deleteCampaignLeads("camp_1");
+
+      expect(campaignContactDeleteMany).toHaveBeenCalledWith({
+        where: { campaignId: "camp_1", leadId: { in: ["lead_clean"] } },
+      });
+      expect(leadDeleteMany).toHaveBeenCalledWith({ where: { id: { in: ["lead_clean"] } } });
+      expect(result).toMatchObject({ deleted: 1, skipped: 4 });
     });
   });
 

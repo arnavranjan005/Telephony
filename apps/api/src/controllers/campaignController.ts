@@ -4,6 +4,7 @@ import {
   addContactsToCampaign,
   CampaignNotDraftError,
   createCampaign,
+  deleteCampaignLeads,
   getCampaign,
   listCampaigns,
   pauseCampaign,
@@ -64,6 +65,25 @@ export async function postCampaignContacts(req: Request, res: Response) {
 
     callEventBus.publishGlobal("campaign.updated", { campaign: result.campaign });
     res.status(201).json({ campaign: result.campaign, added: result.added, alreadyInCampaign: result.alreadyInCampaign });
+  } catch (error) {
+    if (error instanceof CampaignNotDraftError) return res.status(409).json({ error: error.message });
+    throw error;
+  }
+}
+
+/**
+ * Permanently deletes every lead attached to a DRAFT campaign - e.g. cleaning
+ * up a throwaway import. Leads with call/appointment/follow-up history or
+ * attached to another campaign too are silently left alone (see
+ * deleteCampaignLeads' doc comment) rather than blocking the whole batch.
+ */
+export async function deleteCampaignContacts(req: Request, res: Response) {
+  try {
+    const result = await deleteCampaignLeads(req.params.campaignId);
+    if (!result) return res.status(404).json({ error: "Campaign not found" });
+
+    callEventBus.publishGlobal("campaign.updated", { campaign: result.campaign });
+    res.json({ campaign: result.campaign, deleted: result.deleted, skipped: result.skipped });
   } catch (error) {
     if (error instanceof CampaignNotDraftError) return res.status(409).json({ error: error.message });
     throw error;

@@ -13,6 +13,7 @@ export type { CreateFollowUpInput, CancelFollowUpResult } from "./followUpServic
 export {
   createCampaign,
   addContactsToCampaign,
+  deleteCampaignLeads,
   CampaignNotDraftError,
   listCampaigns,
   getCampaign,
@@ -20,7 +21,12 @@ export {
   pauseCampaign,
   processCampaignContactJob,
 } from "./campaignService";
-export type { CampaignContactInput, CreateCampaignInput, AddCampaignContactsResult } from "./campaignService";
+export type {
+  CampaignContactInput,
+  CreateCampaignInput,
+  AddCampaignContactsResult,
+  DeleteCampaignLeadsResult,
+} from "./campaignService";
 
 export { isNumberOnDnc, addToDnc, removeFromDnc, listDnc } from "./dncService";
 
