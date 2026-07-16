@@ -1,0 +1,46 @@
+name: CD
+
+# Manual-only VPS deploy. Triggered by clicking "Run workflow" in the Actions
+# tab — never on push/PR (see ci.yml for that). Restricted to `main` via the
+# job-level `if` below, since workflow_dispatch itself has no branch filter
+# (a workflow file present on any branch can be dispatched from it).
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # Everything runs on the VPS itself against the repo checkout already
+      # there (DEPLOY_PATH) — no build artifacts are produced or shipped by
+      # the runner. `npm run build` (nx run-many -t build --all) builds
+      # api/worker/web; apps/web still runs via `next dev` under PM2, so its
+      # build output isn't served, but building it keeps typecheck-adjacent
+      # errors visible during deploy rather than silently skipped.
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: root
+          password: ${{ secrets.SSH_PASSWORD }}
+          script_stop: true
+          script: |
+            set -e
+            cd "${{ secrets.DEPLOY_PATH }}"
+
+            git fetch origin main
+            git reset --hard origin/main
+
+            npm ci
+            npm run build
+
+            pm2 restart api
+            pm2 restart worker
+            pm2 restart web
+
+      # Database schema changes (prisma db push / migrate deploy) are not
+      # run here — DEPLOYMENT.md notes there's no prisma/migrations/
+      # directory yet, so this stays a manual step when needed.
