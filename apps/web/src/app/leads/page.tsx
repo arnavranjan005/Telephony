@@ -26,7 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { Plus, Upload } from "lucide-react";
+import { Plus, Search, Upload } from "lucide-react";
 import { CsvDropzone } from "@/components/csv-dropzone";
 import { type CsvParseResult } from "@/lib/csv";
 
@@ -48,39 +48,47 @@ export default function LeadsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [search, setSearch] = useState("");
 
   const status = filter === "ALL" ? undefined : filter;
 
   // Loads the first page (resetting any accumulated pages). Called on mount,
-  // on filter change, and whenever a lead.* SSE event lands - new leads sort to
-  // the top, so restarting from page one is the correct refresh.
+  // on filter/search change (debounced below), and whenever a lead.* SSE
+  // event lands - new leads sort to the top, so restarting from page one is
+  // the correct refresh. Search matches name/phone across the whole table,
+  // not just a preloaded page - same server-side search the campaign lead
+  // picker uses.
   const load = useCallback(() => {
     apiClient
-      .listLeads({ status })
+      .listLeads({ status, search: search.trim() || undefined })
       .then((data) => {
         setLeads(data.leads);
         setNextCursor(data.nextCursor);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [status]);
+  }, [status, search]);
 
   const loadMore = useCallback(() => {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
     apiClient
-      .listLeads({ status, cursor: nextCursor })
+      .listLeads({ status, search: search.trim() || undefined, cursor: nextCursor })
       .then((data) => {
         setLeads((prev) => [...(prev ?? []), ...data.leads]);
         setNextCursor(data.nextCursor);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoadingMore(false));
-  }, [status, nextCursor, loadingMore]);
+  }, [status, search, nextCursor, loadingMore]);
 
+  // Debounced so search doesn't fire a request per keystroke; a status tab
+  // click also flows through here (load's identity changes with it too),
+  // just with a barely-perceptible 250ms delay.
   useEffect(() => {
     setLeads(null);
     setNextCursor(null);
-    load();
+    const handle = setTimeout(load, 250);
+    return () => clearTimeout(handle);
   }, [load]);
 
   useEventStream(
@@ -119,21 +127,36 @@ export default function LeadsPage() {
         </div>
       </div>
 
-      <Tabs value={filter} onValueChange={(value) => setFilter(value as LeadStatus | "ALL")}>
-        <TabsList>
-          {STATUS_TABS.map((status) => (
-            <TabsTrigger key={status} value={status}>
-              {status === "ALL" ? "All" : status.charAt(0) + status.slice(1).toLowerCase()}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
+      <div className="flex items-center justify-between gap-4">
+        <Tabs value={filter} onValueChange={(value) => setFilter(value as LeadStatus | "ALL")}>
+          <TabsList>
+            {STATUS_TABS.map((status) => (
+              <TabsTrigger key={status} value={status}>
+                {status === "ALL" ? "All" : status.charAt(0) + status.slice(1).toLowerCase()}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <div className="relative w-full max-w-xs">
+          <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="pl-8"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search leads by name or number"
+          />
+        </div>
+      </div>
 
       {error && <p className="text-sm text-destructive">Failed to load leads: {error}</p>}
 
       {!leads && !error && <Skeleton className="h-96 w-full" />}
 
-      {leads && leads.length === 0 && <p className="text-sm text-muted-foreground">No leads yet.</p>}
+      {leads && leads.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          {search.trim() ? "No leads match that search." : "No leads yet."}
+        </p>
+      )}
 
       {leads && leads.length > 0 && (
         <Table>
