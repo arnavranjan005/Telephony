@@ -142,11 +142,17 @@ describe("Campaign routes", () => {
     expect(res.body.campaign.status).toBe("PAUSED");
   });
 
-  it("DELETE /api/campaigns/:id/contacts deletes clean leads and reports counts", async () => {
-    deleteCampaignLeads.mockResolvedValue({ campaign: { id: "camp_1", contacts: [] }, deleted: 3, skipped: 1 });
+  it("DELETE /api/campaigns/:id/contacts deletes clean leads and reports counts with reasons", async () => {
+    const skippedLeads = [{ id: "lead_1", name: "Blocked Co", phoneNumber: "+15551234567", reason: "2 calls" }];
+    deleteCampaignLeads.mockResolvedValue({
+      campaign: { id: "camp_1", contacts: [] },
+      deleted: 3,
+      skipped: 1,
+      skippedLeads,
+    });
     const res = await request(app).delete("/api/campaigns/camp_1/contacts");
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ deleted: 3, skipped: 1 });
+    expect(res.body).toMatchObject({ deleted: 3, skipped: 1, skippedLeads });
     expect(deleteCampaignLeads).toHaveBeenCalledWith("camp_1");
   });
 

@@ -58,7 +58,11 @@ describe("delete campaign leads e2e (real Postgres)", () => {
     const res = await request(app).delete(`/api/campaigns/${campaignId}/contacts`);
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ deleted: 0, skipped: 1 });
+    expect(res.body).toMatchObject({
+      deleted: 0,
+      skipped: 1,
+      skippedLeads: [{ id: lead.id, name: "Has Call", phoneNumber: lead.phoneNumber, reason: "1 call" }],
+    });
     expect(await prisma.lead.findUnique({ where: { id: lead.id } })).not.toBeNull();
     expect(await prisma.campaignContact.count({ where: { campaignId } })).toBe(1);
   });
@@ -78,7 +82,11 @@ describe("delete campaign leads e2e (real Postgres)", () => {
 
     const res = await request(app).delete(`/api/campaigns/${campaignId}/contacts`);
 
-    expect(res.body).toMatchObject({ deleted: 0, skipped: 1 });
+    expect(res.body).toMatchObject({
+      deleted: 0,
+      skipped: 1,
+      skippedLeads: [{ id: lead.id, reason: "1 appointment" }],
+    });
     expect(await prisma.lead.findUnique({ where: { id: lead.id } })).not.toBeNull();
   });
 
@@ -92,7 +100,11 @@ describe("delete campaign leads e2e (real Postgres)", () => {
 
     const res = await request(app).delete(`/api/campaigns/${campaignId}/contacts`);
 
-    expect(res.body).toMatchObject({ deleted: 0, skipped: 1 });
+    expect(res.body).toMatchObject({
+      deleted: 0,
+      skipped: 1,
+      skippedLeads: [{ id: lead.id, reason: "1 follow-up" }],
+    });
     expect(await prisma.lead.findUnique({ where: { id: lead.id } })).not.toBeNull();
   });
 
@@ -105,7 +117,11 @@ describe("delete campaign leads e2e (real Postgres)", () => {
 
     const res = await request(app).delete(`/api/campaigns/${campaignId}/contacts`);
 
-    expect(res.body).toMatchObject({ deleted: 0, skipped: 1 });
+    expect(res.body).toMatchObject({
+      deleted: 0,
+      skipped: 1,
+      skippedLeads: [{ id: lead.id, reason: "in 1 other campaign" }],
+    });
     expect(await prisma.lead.findUnique({ where: { id: lead.id } })).not.toBeNull();
     // Untouched in both campaigns - not just left in the other one.
     expect(await prisma.campaignContact.count({ where: { leadId: lead.id } })).toBe(2);

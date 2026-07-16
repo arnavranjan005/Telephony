@@ -68,6 +68,15 @@ export interface AddCampaignContactsResult {
   alreadyInCampaign: number;
 }
 
+export interface SkippedLead {
+  id: string;
+  name: string | null;
+  phoneNumber: string;
+  /** Human-readable summary of why this lead couldn't be deleted, e.g.
+   * "2 calls, in 1 other campaign". */
+  reason: string;
+}
+
 export interface DeleteCampaignLeadsResult {
   campaign: CampaignWithContacts;
   /** Leads permanently deleted. */
@@ -75,4 +84,5 @@ export interface DeleteCampaignLeadsResult {
   /** Leads left untouched because they have call/appointment/follow-up
    * history or are attached to another campaign too. */
   skipped: number;
+  skippedLeads: SkippedLead[];
 }

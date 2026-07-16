@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import type { Campaign, CampaignWithContacts, DashboardEvent, Lead } from "@telephony/shared-types";
+import type { Campaign, CampaignWithContacts, DashboardEvent, Lead, SkippedLead } from "@telephony/shared-types";
 import { apiClient } from "@/lib/apiClient";
 import { useEventStream } from "@/hooks/useEventStream";
 import { StatusBadge } from "@/components/status-badge";
@@ -568,13 +568,16 @@ function CampaignDetailSheet({ campaignId, onClose }: { campaignId: string | nul
   const [campaign, setCampaign] = useState<CampaignWithContacts | null>(null);
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [skippedLeads, setSkippedLeads] = useState<SkippedLead[] | null>(null);
 
   useEffect(() => {
     if (!campaignId) {
       setCampaign(null);
+      setSkippedLeads(null);
       return;
     }
     setLoading(true);
+    setSkippedLeads(null);
     apiClient
       .getCampaign(campaignId)
       .then((data) => setCampaign(data.campaign))
@@ -598,8 +601,9 @@ function CampaignDetailSheet({ campaignId, onClose }: { campaignId: string | nul
     try {
       const result = await apiClient.deleteCampaignLeads(campaign.id);
       setCampaign(result.campaign);
+      setSkippedLeads(result.skippedLeads.length > 0 ? result.skippedLeads : null);
       const parts = [`${result.deleted} lead${result.deleted === 1 ? "" : "s"} deleted`];
-      if (result.skipped > 0) parts.push(`${result.skipped} skipped (has history or is in another campaign)`);
+      if (result.skipped > 0) parts.push(`${result.skipped} skipped`);
       toast.success(parts.join(", "));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to delete leads");
@@ -641,6 +645,19 @@ function CampaignDetailSheet({ campaignId, onClose }: { campaignId: string | nul
                 <Button size="sm" variant="outline" onClick={deleteAllLeads} disabled={deleting}>
                   <Trash2 /> Delete all leads
                 </Button>
+              )}
+              {skippedLeads && skippedLeads.length > 0 && (
+                <details className="text-xs text-muted-foreground">
+                  <summary className="cursor-pointer">{skippedLeads.length} leads skipped</summary>
+                  <ul className="mt-1.5 flex flex-col gap-0.5 pl-4">
+                    {skippedLeads.slice(0, 10).map((lead) => (
+                      <li key={lead.id} className="list-disc">
+                        {lead.name || lead.phoneNumber}: {lead.reason}
+                      </li>
+                    ))}
+                    {skippedLeads.length > 10 && <li className="list-disc">…and {skippedLeads.length - 10} more</li>}
+                  </ul>
+                </details>
               )}
               <div className="flex flex-col gap-2">
                 {campaign.contacts.map((contact) => (

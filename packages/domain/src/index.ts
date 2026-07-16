@@ -26,6 +26,7 @@ export type {
   CreateCampaignInput,
   AddCampaignContactsResult,
   DeleteCampaignLeadsResult,
+  SkippedLead,
 } from "./campaignService";
 
 export { isNumberOnDnc, addToDnc, removeFromDnc, listDnc } from "./dncService";

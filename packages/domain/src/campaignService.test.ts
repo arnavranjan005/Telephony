@@ -388,7 +388,7 @@ describe("campaignService", () => {
 
       const result = await deleteCampaignLeads("camp_1");
 
-      expect(result).toMatchObject({ deleted: 0, skipped: 0 });
+      expect(result).toMatchObject({ deleted: 0, skipped: 0, skippedLeads: [] });
       expect(leadFindMany).not.toHaveBeenCalled();
       expect(leadDeleteMany).not.toHaveBeenCalled();
     });
@@ -397,8 +397,8 @@ describe("campaignService", () => {
       campaignUpdateMany.mockResolvedValue({ count: 1 });
       campaignContactFindManyTx.mockResolvedValue([{ leadId: "lead_1" }, { leadId: "lead_2" }]);
       leadFindMany.mockResolvedValue([
-        { id: "lead_1", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 1 } },
-        { id: "lead_2", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 1 } },
+        { id: "lead_1", name: "Lead One", phoneNumber: "+15551110001", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 1 } },
+        { id: "lead_2", name: "Lead Two", phoneNumber: "+15551110002", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 1 } },
       ]);
       campaignFindUnique.mockResolvedValue({ id: "camp_1", status: "DRAFT", contacts: [] });
 
@@ -408,10 +408,10 @@ describe("campaignService", () => {
         where: { campaignId: "camp_1", leadId: { in: ["lead_1", "lead_2"] } },
       });
       expect(leadDeleteMany).toHaveBeenCalledWith({ where: { id: { in: ["lead_1", "lead_2"] } } });
-      expect(result).toMatchObject({ deleted: 2, skipped: 0 });
+      expect(result).toMatchObject({ deleted: 2, skipped: 0, skippedLeads: [] });
     });
 
-    it("skips a lead with call history, an appointment, a follow-up, or another campaign attachment", async () => {
+    it("skips a lead with call history, an appointment, a follow-up, or another campaign attachment, reporting why", async () => {
       campaignUpdateMany.mockResolvedValue({ count: 1 });
       campaignContactFindManyTx.mockResolvedValue([
         { leadId: "lead_clean" },
@@ -421,11 +421,11 @@ describe("campaignService", () => {
         { leadId: "lead_in_other_campaign" },
       ]);
       leadFindMany.mockResolvedValue([
-        { id: "lead_clean", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 1 } },
-        { id: "lead_has_call", _count: { calls: 1, appointments: 0, followUps: 0, campaignContacts: 1 } },
-        { id: "lead_has_appt", _count: { calls: 0, appointments: 1, followUps: 0, campaignContacts: 1 } },
-        { id: "lead_has_followup", _count: { calls: 0, appointments: 0, followUps: 1, campaignContacts: 1 } },
-        { id: "lead_in_other_campaign", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 2 } },
+        { id: "lead_clean", name: "Clean Co", phoneNumber: "+15551110000", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 1 } },
+        { id: "lead_has_call", name: "Has Call Co", phoneNumber: "+15551110001", _count: { calls: 2, appointments: 0, followUps: 0, campaignContacts: 1 } },
+        { id: "lead_has_appt", name: "Has Appt Co", phoneNumber: "+15551110002", _count: { calls: 0, appointments: 1, followUps: 0, campaignContacts: 1 } },
+        { id: "lead_has_followup", name: "Has Followup Co", phoneNumber: "+15551110003", _count: { calls: 0, appointments: 0, followUps: 1, campaignContacts: 1 } },
+        { id: "lead_in_other_campaign", name: null, phoneNumber: "+15551110004", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 2 } },
       ]);
       campaignFindUnique.mockResolvedValue({ id: "camp_1", status: "DRAFT", contacts: [] });
 
@@ -435,7 +435,16 @@ describe("campaignService", () => {
         where: { campaignId: "camp_1", leadId: { in: ["lead_clean"] } },
       });
       expect(leadDeleteMany).toHaveBeenCalledWith({ where: { id: { in: ["lead_clean"] } } });
-      expect(result).toMatchObject({ deleted: 1, skipped: 4 });
+      expect(result).toMatchObject({
+        deleted: 1,
+        skipped: 4,
+        skippedLeads: [
+          { id: "lead_has_call", name: "Has Call Co", phoneNumber: "+15551110001", reason: "2 calls" },
+          { id: "lead_has_appt", name: "Has Appt Co", phoneNumber: "+15551110002", reason: "1 appointment" },
+          { id: "lead_has_followup", name: "Has Followup Co", phoneNumber: "+15551110003", reason: "1 follow-up" },
+          { id: "lead_in_other_campaign", name: null, phoneNumber: "+15551110004", reason: "in 1 other campaign" },
+        ],
+      });
     });
   });
 

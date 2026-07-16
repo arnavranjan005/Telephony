@@ -83,7 +83,12 @@ export async function deleteCampaignContacts(req: Request, res: Response) {
     if (!result) return res.status(404).json({ error: "Campaign not found" });
 
     callEventBus.publishGlobal("campaign.updated", { campaign: result.campaign });
-    res.json({ campaign: result.campaign, deleted: result.deleted, skipped: result.skipped });
+    res.json({
+      campaign: result.campaign,
+      deleted: result.deleted,
+      skipped: result.skipped,
+      skippedLeads: result.skippedLeads,
+    });
   } catch (error) {
     if (error instanceof CampaignNotDraftError) return res.status(409).json({ error: error.message });
     throw error;

@@ -212,6 +212,15 @@ export async function addContactsToCampaign(
   return { campaign: campaign!, added: outcome.added, alreadyInCampaign: outcome.alreadyInCampaign };
 }
 
+export interface SkippedLead {
+  id: string;
+  name: string | null;
+  phoneNumber: string;
+  /** Human-readable summary of why this lead couldn't be deleted, e.g.
+   * "2 calls, in 1 other campaign". */
+  reason: string;
+}
+
 export interface DeleteCampaignLeadsResult {
   campaign: NonNullable<Awaited<ReturnType<typeof getCampaign>>>;
   /** Leads actually deleted. */
@@ -219,6 +228,22 @@ export interface DeleteCampaignLeadsResult {
   /** Leads left untouched - either attached to another campaign too, or with
    * call/appointment/follow-up history - and why each was skipped. */
   skipped: number;
+  skippedLeads: SkippedLead[];
+}
+
+/** Builds the human-readable reason a lead was skipped from its related-row
+ * counts - a lead can have more than one reason at once (e.g. call history
+ * *and* another campaign), so this joins whichever apply. */
+function describeSkipReason(counts: { calls: number; appointments: number; followUps: number; campaignContacts: number }): string {
+  const parts: string[] = [];
+  if (counts.calls > 0) parts.push(`${counts.calls} call${counts.calls === 1 ? "" : "s"}`);
+  if (counts.appointments > 0) parts.push(`${counts.appointments} appointment${counts.appointments === 1 ? "" : "s"}`);
+  if (counts.followUps > 0) parts.push(`${counts.followUps} follow-up${counts.followUps === 1 ? "" : "s"}`);
+  // campaignContacts includes this campaign's own row, so subtract it to get
+  // the count of *other* campaigns this lead is attached to.
+  const otherCampaigns = counts.campaignContacts - 1;
+  if (otherCampaigns > 0) parts.push(`in ${otherCampaigns} other campaign${otherCampaigns === 1 ? "" : "s"}`);
+  return parts.join(", ");
 }
 
 /**
@@ -260,27 +285,32 @@ export async function deleteCampaignLeads(campaignId: string): Promise<DeleteCam
 
     const contacts = await tx.campaignContact.findMany({ where: { campaignId }, select: { leadId: true } });
     const leadIds = contacts.map((c) => c.leadId);
-    if (leadIds.length === 0) return { deleted: 0, skipped: 0 };
+    if (leadIds.length === 0) return { deleted: 0, skipped: 0, skippedLeads: [] as SkippedLead[] };
 
     const leads = await tx.lead.findMany({
       where: { id: { in: leadIds } },
       select: {
         id: true,
+        name: true,
+        phoneNumber: true,
         _count: { select: { calls: true, appointments: true, followUps: true, campaignContacts: true } },
       },
     });
 
     // campaignContacts === 1 means this campaign is the only one it's in -
     // every lead here has at least this one contact row, so 1 is "none else".
-    const cleanLeadIds = leads
-      .filter(
-        (lead) =>
-          lead._count.calls === 0 &&
-          lead._count.appointments === 0 &&
-          lead._count.followUps === 0 &&
-          lead._count.campaignContacts === 1
-      )
-      .map((lead) => lead.id);
+    const isClean = (counts: { calls: number; appointments: number; followUps: number; campaignContacts: number }) =>
+      counts.calls === 0 && counts.appointments === 0 && counts.followUps === 0 && counts.campaignContacts === 1;
+
+    const cleanLeadIds = leads.filter((lead) => isClean(lead._count)).map((lead) => lead.id);
+    const skippedLeads: SkippedLead[] = leads
+      .filter((lead) => !isClean(lead._count))
+      .map((lead) => ({
+        id: lead.id,
+        name: lead.name,
+        phoneNumber: lead.phoneNumber,
+        reason: describeSkipReason(lead._count),
+      }));
 
     if (cleanLeadIds.length > 0) {
       // The contact row itself blocks lead deletion via FK (no cascade from
@@ -290,12 +320,17 @@ export async function deleteCampaignLeads(campaignId: string): Promise<DeleteCam
       await tx.lead.deleteMany({ where: { id: { in: cleanLeadIds } } });
     }
 
-    return { deleted: cleanLeadIds.length, skipped: leadIds.length - cleanLeadIds.length };
+    return { deleted: cleanLeadIds.length, skipped: skippedLeads.length, skippedLeads };
   });
 
   if (!outcome) return null;
   const campaign = await getCampaign(campaignId);
-  return { campaign: campaign!, deleted: outcome.deleted, skipped: outcome.skipped };
+  return {
+    campaign: campaign!,
+    deleted: outcome.deleted,
+    skipped: outcome.skipped,
+    skippedLeads: outcome.skippedLeads,
+  };
 }
 
 export async function listCampaigns() {
