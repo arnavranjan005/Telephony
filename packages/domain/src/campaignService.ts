@@ -287,6 +287,22 @@ export async function deleteCampaignLeads(campaignId: string): Promise<DeleteCam
     const leadIds = contacts.map((c) => c.leadId);
     if (leadIds.length === 0) return { deleted: 0, skipped: 0, skippedLeads: [] as SkippedLead[] };
 
+    // Locks every candidate lead row for the rest of this transaction,
+    // *before* reading their related-row counts below - closing the race
+    // outright rather than shrinking the window between separate read/write
+    // statements (which two earlier attempts at this still left open:
+    // narrower each time, but never zero). Postgres requires a FOR KEY SHARE
+    // lock on a referenced row before inserting anything that references it
+    // via FK - a new call, appointment, follow-up, or a *different* draft
+    // campaign's addContactsToCampaign() attaching one of these leads to
+    // itself - and FOR KEY SHARE conflicts with FOR UPDATE. So any such
+    // concurrent write against one of these specific leads now blocks until
+    // this transaction commits or rolls back, meaning the _count read just
+    // below is stable for the rest of this function: nothing can change out
+    // from under it, so the plain (non-live-re-checked) deletes afterward
+    // are safe exactly as they were before this race was ever found.
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM "Lead" WHERE id IN (${Prisma.join(leadIds)}) FOR UPDATE`);
+
     const leads = await tx.lead.findMany({
       where: { id: { in: leadIds } },
       select: {
@@ -312,44 +328,17 @@ export async function deleteCampaignLeads(campaignId: string): Promise<DeleteCam
         reason: describeSkipReason(lead._count),
       }));
 
-    let deleted = 0;
     if (cleanLeadIds.length > 0) {
-      // Both deletes re-verify cleanliness live rather than trusting the
-      // _count read above: this campaign's own claim only locks *this*
-      // campaign's row, so a concurrent addContactsToCampaign() on a
-      // DIFFERENT draft campaign could attach one of these leads (or a call/
-      // appointment/follow-up could land on it) in the window between that
-      // read and these deletes.
-      //
-      // The contact-row delete is gated on the SAME liveness check, not just
-      // membership in cleanLeadIds - otherwise a lead that raced in a new
-      // disqualifying row would still have its contact row on this campaign
-      // removed unconditionally here, leaving it silently detached from a
-      // campaign it's supposedly just "skipped" (untouched) from, even
-      // though it never actually gets deleted below. Gating this delete the
-      // same way means a lead's contact row is only ever removed at a moment
-      // it's genuinely clean and solely attached to this campaign - correct
-      // regardless of what happens to it a moment later.
-      const liveCleanFilter = { calls: { none: {} }, appointments: { none: {} }, followUps: { none: {} } };
-      await tx.campaignContact.deleteMany({
-        where: {
-          campaignId,
-          leadId: { in: cleanLeadIds },
-          lead: { ...liveCleanFilter, campaignContacts: { none: { campaignId: { not: campaignId } } } },
-        },
-      });
-
-      // Anything whose contact row was just removed above now has zero
-      // campaignContacts left (that was its only one) and is safe to delete;
-      // anything still holding a contact row - raced, or unclean all along -
-      // is correctly excluded rather than hitting its still-live FK.
-      const result = await tx.lead.deleteMany({
-        where: { id: { in: cleanLeadIds }, ...liveCleanFilter, campaignContacts: { none: {} } },
-      });
-      deleted = result.count;
+      // The contact row itself blocks lead deletion via FK (no cascade from
+      // CampaignContact.lead - see schema.prisma) even for this campaign, so
+      // it has to go first. Safe as a plain delete (no live re-check needed)
+      // now that the lock above guarantees nothing else touched these leads
+      // since the read.
+      await tx.campaignContact.deleteMany({ where: { campaignId, leadId: { in: cleanLeadIds } } });
+      await tx.lead.deleteMany({ where: { id: { in: cleanLeadIds } } });
     }
 
-    return { deleted, skipped: leadIds.length - deleted, skippedLeads };
+    return { deleted: cleanLeadIds.length, skipped: skippedLeads.length, skippedLeads };
   });
 
   if (!outcome) return null;
