@@ -405,8 +405,22 @@ describe("campaignService", () => {
 
       const result = await deleteCampaignLeads("camp_1");
 
+      // The contact-row delete is gated on the same live cleanliness check as
+      // the lead delete below - not a blind delete over all of cleanLeadIds -
+      // so a lead that raced in a disqualifying row keeps its attachment to
+      // this campaign instead of being silently detached without also being
+      // deleted (see the doc comment in campaignService.ts).
       expect(campaignContactDeleteMany).toHaveBeenCalledWith({
-        where: { campaignId: "camp_1", leadId: { in: ["lead_1", "lead_2"] } },
+        where: {
+          campaignId: "camp_1",
+          leadId: { in: ["lead_1", "lead_2"] },
+          lead: {
+            calls: { none: {} },
+            appointments: { none: {} },
+            followUps: { none: {} },
+            campaignContacts: { none: { campaignId: { not: "camp_1" } } },
+          },
+        },
       });
       // Re-verified with a live relation predicate at delete time (not just
       // the earlier _count read) so a lead attached to another campaign
@@ -467,7 +481,16 @@ describe("campaignService", () => {
       const result = await deleteCampaignLeads("camp_1");
 
       expect(campaignContactDeleteMany).toHaveBeenCalledWith({
-        where: { campaignId: "camp_1", leadId: { in: ["lead_clean"] } },
+        where: {
+          campaignId: "camp_1",
+          leadId: { in: ["lead_clean"] },
+          lead: {
+            calls: { none: {} },
+            appointments: { none: {} },
+            followUps: { none: {} },
+            campaignContacts: { none: { campaignId: { not: "camp_1" } } },
+          },
+        },
       });
       expect(leadDeleteMany).toHaveBeenCalledWith({
         where: {

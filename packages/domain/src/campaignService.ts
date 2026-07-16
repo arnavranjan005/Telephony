@@ -314,30 +314,37 @@ export async function deleteCampaignLeads(campaignId: string): Promise<DeleteCam
 
     let deleted = 0;
     if (cleanLeadIds.length > 0) {
-      // The contact row itself blocks lead deletion via FK (no cascade from
-      // CampaignContact.lead - see schema.prisma) even for this campaign, so
-      // it has to go first.
-      await tx.campaignContact.deleteMany({ where: { campaignId, leadId: { in: cleanLeadIds } } });
-
-      // Re-verify cleanliness with a live relation predicate rather than
-      // trusting the _count read above: this campaign's own claim only locks
-      // *this* campaign's row, so a concurrent addContactsToCampaign() on a
+      // Both deletes re-verify cleanliness live rather than trusting the
+      // _count read above: this campaign's own claim only locks *this*
+      // campaign's row, so a concurrent addContactsToCampaign() on a
       // DIFFERENT draft campaign could attach one of these leads (or a call/
       // appointment/follow-up could land on it) in the window between that
-      // read and this delete. A stale id list would then hit that lead's
-      // still-live FK and fail the whole deleteMany. Since this campaign's
-      // own contact row was just removed above, a lead that's still
-      // genuinely clean now has zero campaignContacts left, so this
-      // predicate only ever deletes leads that are clean *at delete time* -
-      // anything that raced in is simply left alone, not erroring the batch.
-      const result = await tx.lead.deleteMany({
+      // read and these deletes.
+      //
+      // The contact-row delete is gated on the SAME liveness check, not just
+      // membership in cleanLeadIds - otherwise a lead that raced in a new
+      // disqualifying row would still have its contact row on this campaign
+      // removed unconditionally here, leaving it silently detached from a
+      // campaign it's supposedly just "skipped" (untouched) from, even
+      // though it never actually gets deleted below. Gating this delete the
+      // same way means a lead's contact row is only ever removed at a moment
+      // it's genuinely clean and solely attached to this campaign - correct
+      // regardless of what happens to it a moment later.
+      const liveCleanFilter = { calls: { none: {} }, appointments: { none: {} }, followUps: { none: {} } };
+      await tx.campaignContact.deleteMany({
         where: {
-          id: { in: cleanLeadIds },
-          calls: { none: {} },
-          appointments: { none: {} },
-          followUps: { none: {} },
-          campaignContacts: { none: {} },
+          campaignId,
+          leadId: { in: cleanLeadIds },
+          lead: { ...liveCleanFilter, campaignContacts: { none: { campaignId: { not: campaignId } } } },
         },
+      });
+
+      // Anything whose contact row was just removed above now has zero
+      // campaignContacts left (that was its only one) and is safe to delete;
+      // anything still holding a contact row - raced, or unclean all along -
+      // is correctly excluded rather than hitting its still-live FK.
+      const result = await tx.lead.deleteMany({
+        where: { id: { in: cleanLeadIds }, ...liveCleanFilter, campaignContacts: { none: {} } },
       });
       deleted = result.count;
     }
