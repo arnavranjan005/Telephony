@@ -16,9 +16,10 @@ jobs:
     steps:
       # Everything runs on the VPS itself against the repo checkout already
       # there (DEPLOY_PATH) — no build artifacts are produced or shipped by
-      # the runner. apps/web currently runs via `next dev` under PM2 (not a
-      # production build/static export), so it only needs deps reinstalled
-      # and a restart, same as api/worker.
+      # the runner. `npm run build` (nx run-many -t build --all) builds
+      # api/worker/web; apps/web still runs via `next dev` under PM2, so its
+      # build output isn't served, but building it keeps typecheck-adjacent
+      # errors visible during deploy rather than silently skipped.
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -36,8 +37,7 @@ jobs:
             npm ci
             npx nx run database:prisma-generate
 
-            npx nx run api:build
-            npx nx run worker:build
+            npm run build
 
             pm2 restart api
             pm2 restart worker
