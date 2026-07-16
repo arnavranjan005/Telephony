@@ -16,6 +16,7 @@ import type {
   CreateCampaignInput,
   CreateFollowUpInput,
   CreateLeadInput,
+  DeleteCampaignLeadsResult,
   DncEntry,
   FollowUp,
   FollowUpStatus,
@@ -103,6 +104,8 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  deleteCampaignLeads: (campaignId: string) =>
+    apiFetch<DeleteCampaignLeadsResult>(`/api/campaigns/${campaignId}/contacts`, { method: "DELETE" }),
   startCampaign: (campaignId: string) =>
     apiFetch<{ campaign: Campaign }>(`/api/campaigns/${campaignId}/start`, { method: "POST" }),
   pauseCampaign: (campaignId: string) =>

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  deleteCampaignContacts,
   getCampaignById,
   getCampaigns,
   getObjectionBaseline,
@@ -23,5 +24,6 @@ router.get("/:campaignId", getCampaignById);
 router.post("/:campaignId/start", postStartCampaign);
 router.post("/:campaignId/pause", postPauseCampaign);
 router.post("/:campaignId/contacts", idempotency, postCampaignContacts);
+router.delete("/:campaignId/contacts", deleteCampaignContacts);
 
 export default router;

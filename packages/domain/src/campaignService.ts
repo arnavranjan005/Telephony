@@ -212,6 +212,145 @@ export async function addContactsToCampaign(
   return { campaign: campaign!, added: outcome.added, alreadyInCampaign: outcome.alreadyInCampaign };
 }
 
+export interface SkippedLead {
+  id: string;
+  name: string | null;
+  phoneNumber: string;
+  /** Human-readable summary of why this lead couldn't be deleted, e.g.
+   * "2 calls, in 1 other campaign". */
+  reason: string;
+}
+
+export interface DeleteCampaignLeadsResult {
+  campaign: NonNullable<Awaited<ReturnType<typeof getCampaign>>>;
+  /** Leads actually deleted. */
+  deleted: number;
+  /** Leads left untouched - either attached to another campaign too, or with
+   * call/appointment/follow-up history - and why each was skipped. */
+  skipped: number;
+  skippedLeads: SkippedLead[];
+}
+
+/** Builds the human-readable reason a lead was skipped from its related-row
+ * counts - a lead can have more than one reason at once (e.g. call history
+ * *and* another campaign), so this joins whichever apply. */
+function describeSkipReason(counts: { calls: number; appointments: number; followUps: number; campaignContacts: number }): string {
+  const parts: string[] = [];
+  if (counts.calls > 0) parts.push(`${counts.calls} call${counts.calls === 1 ? "" : "s"}`);
+  if (counts.appointments > 0) parts.push(`${counts.appointments} appointment${counts.appointments === 1 ? "" : "s"}`);
+  if (counts.followUps > 0) parts.push(`${counts.followUps} follow-up${counts.followUps === 1 ? "" : "s"}`);
+  // campaignContacts includes this campaign's own row, so subtract it to get
+  // the count of *other* campaigns this lead is attached to.
+  const otherCampaigns = counts.campaignContacts - 1;
+  if (otherCampaigns > 0) parts.push(`in ${otherCampaigns} other campaign${otherCampaigns === 1 ? "" : "s"}`);
+  return parts.join(", ");
+}
+
+/**
+ * Permanently deletes every lead attached to a DRAFT campaign - e.g. cleaning
+ * up a throwaway import or a campaign that was drafted by mistake - rather
+ * than just detaching them (which addContactsToCampaign's inverse would do).
+ *
+ * Only deletes a lead if it's "clean": no calls, appointments, or follow-ups,
+ * and this campaign is the only one it's attached to. Postgres itself would
+ * reject deleting a lead that still has any of those (no cascade is
+ * configured on those relations on purpose - see schema.prisma), but the
+ * check happens up front so a lead with real history is silently left alone
+ * instead of the whole batch erroring out. A lead skipped this way keeps its
+ * contact row on this campaign too, since deleting the attachment but not
+ * the lead would just be a confusing partial no-op.
+ *
+ * Restricted to DRAFT for the same reason as addContactsToCampaign: a
+ * RUNNING/PAUSED campaign's contacts are mid dial-queue, and deleting leads
+ * out from under an active dial needs different handling this doesn't
+ * attempt.
+ *
+ * Returns null if the campaign doesn't exist, so the caller can 404. Throws
+ * CampaignNotDraftError if it exists but isn't DRAFT, so the caller can 409.
+ */
+export async function deleteCampaignLeads(campaignId: string): Promise<DeleteCampaignLeadsResult | null> {
+  const outcome = await prisma.$transaction(async (tx) => {
+    // Same atomic DRAFT claim as addContactsToCampaign above - without it, a
+    // concurrent startCampaign() could enqueue dials for leads this
+    // transaction is about to delete.
+    const claimed = await tx.campaign.updateMany({
+      where: { id: campaignId, status: CampaignStatus.DRAFT },
+      data: { updatedAt: new Date() },
+    });
+    if (claimed.count === 0) {
+      const campaign = await tx.campaign.findUnique({ where: { id: campaignId } });
+      if (!campaign) return null;
+      throw new CampaignNotDraftError(campaign.status);
+    }
+
+    const contacts = await tx.campaignContact.findMany({ where: { campaignId }, select: { leadId: true } });
+    const leadIds = contacts.map((c) => c.leadId);
+    if (leadIds.length === 0) return { deleted: 0, skipped: 0, skippedLeads: [] as SkippedLead[] };
+
+    // Locks every candidate lead row for the rest of this transaction,
+    // *before* reading their related-row counts below - closing the race
+    // outright rather than shrinking the window between separate read/write
+    // statements (which two earlier attempts at this still left open:
+    // narrower each time, but never zero). Postgres requires a FOR KEY SHARE
+    // lock on a referenced row before inserting anything that references it
+    // via FK - a new call, appointment, follow-up, or a *different* draft
+    // campaign's addContactsToCampaign() attaching one of these leads to
+    // itself - and FOR KEY SHARE conflicts with FOR UPDATE. So any such
+    // concurrent write against one of these specific leads now blocks until
+    // this transaction commits or rolls back, meaning the _count read just
+    // below is stable for the rest of this function: nothing can change out
+    // from under it, so the plain (non-live-re-checked) deletes afterward
+    // are safe exactly as they were before this race was ever found.
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM "Lead" WHERE id IN (${Prisma.join(leadIds)}) FOR UPDATE`);
+
+    const leads = await tx.lead.findMany({
+      where: { id: { in: leadIds } },
+      select: {
+        id: true,
+        name: true,
+        phoneNumber: true,
+        _count: { select: { calls: true, appointments: true, followUps: true, campaignContacts: true } },
+      },
+    });
+
+    // campaignContacts === 1 means this campaign is the only one it's in -
+    // every lead here has at least this one contact row, so 1 is "none else".
+    const isClean = (counts: { calls: number; appointments: number; followUps: number; campaignContacts: number }) =>
+      counts.calls === 0 && counts.appointments === 0 && counts.followUps === 0 && counts.campaignContacts === 1;
+
+    const cleanLeadIds = leads.filter((lead) => isClean(lead._count)).map((lead) => lead.id);
+    const skippedLeads: SkippedLead[] = leads
+      .filter((lead) => !isClean(lead._count))
+      .map((lead) => ({
+        id: lead.id,
+        name: lead.name,
+        phoneNumber: lead.phoneNumber,
+        reason: describeSkipReason(lead._count),
+      }));
+
+    if (cleanLeadIds.length > 0) {
+      // The contact row itself blocks lead deletion via FK (no cascade from
+      // CampaignContact.lead - see schema.prisma) even for this campaign, so
+      // it has to go first. Safe as a plain delete (no live re-check needed)
+      // now that the lock above guarantees nothing else touched these leads
+      // since the read.
+      await tx.campaignContact.deleteMany({ where: { campaignId, leadId: { in: cleanLeadIds } } });
+      await tx.lead.deleteMany({ where: { id: { in: cleanLeadIds } } });
+    }
+
+    return { deleted: cleanLeadIds.length, skipped: skippedLeads.length, skippedLeads };
+  });
+
+  if (!outcome) return null;
+  const campaign = await getCampaign(campaignId);
+  return {
+    campaign: campaign!,
+    deleted: outcome.deleted,
+    skipped: outcome.skipped,
+    skippedLeads: outcome.skippedLeads,
+  };
+}
+
 export async function listCampaigns() {
   return prisma.campaign.findMany({ orderBy: { createdAt: "desc" } });
 }

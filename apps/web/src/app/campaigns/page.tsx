@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import type { Campaign, CampaignWithContacts, DashboardEvent, Lead } from "@telephony/shared-types";
+import type { Campaign, CampaignWithContacts, DashboardEvent, Lead, SkippedLead } from "@telephony/shared-types";
 import { apiClient } from "@/lib/apiClient";
 import { useEventStream } from "@/hooks/useEventStream";
 import { StatusBadge } from "@/components/status-badge";
@@ -25,7 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { CsvDropzone, type CsvParseResult } from "@/components/csv-dropzone";
-import { Plus, Play, Pause, Check, Search, X, ChevronDown } from "lucide-react";
+import { Plus, Play, Pause, Check, Search, X, ChevronDown, Trash2 } from "lucide-react";
 
 export default function CampaignsPage() {
   const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
@@ -567,18 +567,50 @@ interface StagedContact {
 function CampaignDetailSheet({ campaignId, onClose }: { campaignId: string | null; onClose: () => void }) {
   const [campaign, setCampaign] = useState<CampaignWithContacts | null>(null);
   const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [skippedLeads, setSkippedLeads] = useState<SkippedLead[] | null>(null);
 
   useEffect(() => {
     if (!campaignId) {
       setCampaign(null);
+      setSkippedLeads(null);
       return;
     }
     setLoading(true);
+    setSkippedLeads(null);
     apiClient
       .getCampaign(campaignId)
       .then((data) => setCampaign(data.campaign))
       .finally(() => setLoading(false));
   }, [campaignId]);
+
+  async function deleteAllLeads() {
+    if (!campaign) return;
+    const count = campaign.contacts.length;
+    if (
+      !window.confirm(
+        `Permanently delete all ${count} lead${count === 1 ? "" : "s"} attached to "${campaign.name}"? ` +
+          "Leads with call history, an appointment, a follow-up, or attached to another campaign too will be " +
+          "left alone instead. This can't be undone for the rest."
+      )
+    ) {
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      const result = await apiClient.deleteCampaignLeads(campaign.id);
+      setCampaign(result.campaign);
+      setSkippedLeads(result.skippedLeads.length > 0 ? result.skippedLeads : null);
+      const parts = [`${result.deleted} lead${result.deleted === 1 ? "" : "s"} deleted`];
+      if (result.skipped > 0) parts.push(`${result.skipped} skipped`);
+      toast.success(parts.join(", "));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete leads");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   return (
     <Sheet open={campaignId !== null} onOpenChange={(open) => !open && onClose()}>
@@ -608,6 +640,24 @@ function CampaignDetailSheet({ campaignId, onClose }: { campaignId: string | nul
                   <p className="mb-1 font-medium">Objection playbook</p>
                   <p className="whitespace-pre-wrap text-muted-foreground">{campaign.objectionPlaybook}</p>
                 </div>
+              )}
+              {campaign.status === "DRAFT" && campaign.contacts.length > 0 && (
+                <Button size="sm" variant="outline" onClick={deleteAllLeads} disabled={deleting}>
+                  <Trash2 /> Delete all leads
+                </Button>
+              )}
+              {skippedLeads && skippedLeads.length > 0 && (
+                <details className="text-xs text-muted-foreground">
+                  <summary className="cursor-pointer">{skippedLeads.length} leads skipped</summary>
+                  <ul className="mt-1.5 flex flex-col gap-0.5 pl-4">
+                    {skippedLeads.slice(0, 10).map((lead) => (
+                      <li key={lead.id} className="list-disc">
+                        {lead.name || lead.phoneNumber}: {lead.reason}
+                      </li>
+                    ))}
+                    {skippedLeads.length > 10 && <li className="list-disc">…and {skippedLeads.length - 10} more</li>}
+                  </ul>
+                </details>
               )}
               <div className="flex flex-col gap-2">
                 {campaign.contacts.map((contact) => (

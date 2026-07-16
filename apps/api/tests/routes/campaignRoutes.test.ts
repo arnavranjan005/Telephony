@@ -3,6 +3,7 @@ const listCampaigns = jest.fn();
 const getCampaign = jest.fn();
 const startCampaign = jest.fn();
 const pauseCampaign = jest.fn();
+const deleteCampaignLeads = jest.fn();
 
 jest.mock("@telephony/domain", () => ({
   createCampaign: (...args: unknown[]) => createCampaign(...args),
@@ -10,6 +11,8 @@ jest.mock("@telephony/domain", () => ({
   getCampaign: (...args: unknown[]) => getCampaign(...args),
   startCampaign: (...args: unknown[]) => startCampaign(...args),
   pauseCampaign: (...args: unknown[]) => pauseCampaign(...args),
+  deleteCampaignLeads: (...args: unknown[]) => deleteCampaignLeads(...args),
+  CampaignNotDraftError: class CampaignNotDraftError extends Error {},
 }));
 
 import request from "supertest";
@@ -137,5 +140,32 @@ describe("Campaign routes", () => {
     const res = await request(app).post("/api/campaigns/camp_1/pause");
     expect(res.status).toBe(200);
     expect(res.body.campaign.status).toBe("PAUSED");
+  });
+
+  it("DELETE /api/campaigns/:id/contacts deletes clean leads and reports counts with reasons", async () => {
+    const skippedLeads = [{ id: "lead_1", name: "Blocked Co", phoneNumber: "+15551234567", reason: "2 calls" }];
+    deleteCampaignLeads.mockResolvedValue({
+      campaign: { id: "camp_1", contacts: [] },
+      deleted: 3,
+      skipped: 1,
+      skippedLeads,
+    });
+    const res = await request(app).delete("/api/campaigns/camp_1/contacts");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ deleted: 3, skipped: 1, skippedLeads });
+    expect(deleteCampaignLeads).toHaveBeenCalledWith("camp_1");
+  });
+
+  it("DELETE /api/campaigns/:id/contacts returns 404 for a campaign that doesn't exist", async () => {
+    deleteCampaignLeads.mockResolvedValue(null);
+    const res = await request(app).delete("/api/campaigns/missing/contacts");
+    expect(res.status).toBe(404);
+  });
+
+  it("DELETE /api/campaigns/:id/contacts returns 409 for a campaign that already started", async () => {
+    const { CampaignNotDraftError } = jest.requireMock("@telephony/domain") as { CampaignNotDraftError: new (s: string) => Error };
+    deleteCampaignLeads.mockRejectedValue(new CampaignNotDraftError("RUNNING"));
+    const res = await request(app).delete("/api/campaigns/camp_1/contacts");
+    expect(res.status).toBe(409);
   });
 });
