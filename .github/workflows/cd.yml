@@ -1,72 +1,49 @@
 name: CD
 
-# Manual-only release build. Triggered by clicking "Run workflow" in the
-# Actions tab — never on push/PR (see ci.yml for that). Restricted to `main`
-# via the job-level `if` below, since workflow_dispatch itself has no branch
-# filter (a workflow file present on any branch can be dispatched from it).
+# Manual-only VPS deploy. Triggered by clicking "Run workflow" in the Actions
+# tab — never on push/PR (see ci.yml for that). Restricted to `main` via the
+# job-level `if` below, since workflow_dispatch itself has no branch filter
+# (a workflow file present on any branch can be dispatched from it).
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  deploy:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
-    # Same dummy values as ci.yml: packages/config/src/env.ts validates env
-    # at process start, so `npm run build` needs these present even though
-    # nothing here actually connects to Telnyx/Postgres/Redis/Google.
-    env:
-      DATABASE_URL: "postgresql://user:password@localhost:5432/telephony_ci"
-      REDIS_URL: "rediss://default:password@localhost:6379"
-      TELNYX_API_KEY: "ci_telnyx_api_key"
-      TELNYX_CONNECTION_ID: "ci_connection_id"
-      TELNYX_FROM_NUMBER: "+15550000000"
-      GOOGLE_AI_API_KEY: "ci_google_ai_key"
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      # Everything runs on the VPS itself against the repo checkout already
+      # there (DEPLOY_PATH) — no build artifacts are produced or shipped by
+      # the runner. apps/web currently runs via `next dev` under PM2 (not a
+      # production build/static export), so it only needs deps reinstalled
+      # and a restart, same as api/worker.
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
         with:
-          node-version: "22"
-          cache: "npm"
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd "${{ secrets.DEPLOY_PATH }}"
 
-      - name: Install dependencies
-        run: npm ci
+            git fetch origin main
+            git reset --hard origin/main
 
-      - name: Generate Prisma client
-        run: npx nx run database:prisma-generate
+            npm ci
+            npx nx run database:prisma-generate
 
-      - name: Build
-        run: npm run build
+            npx nx run api:build
+            npx nx run worker:build
 
-      - name: Upload apps/api build
-        uses: actions/upload-artifact@v4
-        with:
-          name: api-dist
-          path: apps/api/dist
+            pm2 restart api
+            pm2 restart worker
+            pm2 restart web
 
-      - name: Upload apps/worker build
-        uses: actions/upload-artifact@v4
-        with:
-          name: worker-dist
-          path: apps/worker/dist
-
-      - name: Upload apps/web build
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-out
-          path: apps/web/out
-
-      # No deploy target is configured yet (see DEPLOYMENT.md — "There is no
-      # deploy job; releases are manual", no Dockerfiles, no hosting platform
-      # chosen). Once one is picked, add steps here following the pipeline
-      # DEPLOYMENT.md already recommends:
-      #   1. Apply schema changes (prisma db push / prisma migrate deploy)
-      #   2. Deploy apps/worker
-      #   3. Deploy apps/api
-      #   4. Build apps/web with the production NEXT_PUBLIC_API_URL and
-      #      upload to the static host/CDN
+      # Database schema changes (prisma db push / migrate deploy) are not
+      # run here — DEPLOYMENT.md notes there's no prisma/migrations/
+      # directory yet, so this stays a manual step when needed.
