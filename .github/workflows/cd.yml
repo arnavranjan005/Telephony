@@ -35,8 +35,6 @@ jobs:
             git reset --hard origin/main
 
             npm ci
-            npx nx run database:prisma-generate
-
             npm run build
 
             pm2 restart api
