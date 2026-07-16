@@ -401,14 +401,48 @@ describe("campaignService", () => {
         { id: "lead_2", name: "Lead Two", phoneNumber: "+15551110002", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 1 } },
       ]);
       campaignFindUnique.mockResolvedValue({ id: "camp_1", status: "DRAFT", contacts: [] });
+      leadDeleteMany.mockResolvedValue({ count: 2 });
 
       const result = await deleteCampaignLeads("camp_1");
 
       expect(campaignContactDeleteMany).toHaveBeenCalledWith({
         where: { campaignId: "camp_1", leadId: { in: ["lead_1", "lead_2"] } },
       });
-      expect(leadDeleteMany).toHaveBeenCalledWith({ where: { id: { in: ["lead_1", "lead_2"] } } });
+      // Re-verified with a live relation predicate at delete time (not just
+      // the earlier _count read) so a lead attached to another campaign
+      // concurrently doesn't 500 the whole batch - see the doc comment in
+      // campaignService.ts.
+      expect(leadDeleteMany).toHaveBeenCalledWith({
+        where: {
+          id: { in: ["lead_1", "lead_2"] },
+          calls: { none: {} },
+          appointments: { none: {} },
+          followUps: { none: {} },
+          campaignContacts: { none: {} },
+        },
+      });
       expect(result).toMatchObject({ deleted: 2, skipped: 0, skippedLeads: [] });
+    });
+
+    it("reports fewer deleted than clean-at-read-time if a lead is concurrently attached elsewhere before the delete runs", async () => {
+      // Simulates the race: lead_clean and lead_raced both look clean from
+      // the earlier _count read, but by the time lead.deleteMany actually
+      // runs, lead_raced has picked up a contact row on a different draft
+      // campaign - so the live predicate below doesn't match it, and only
+      // lead_clean is actually deleted. Proves the counts reflect what the
+      // DB actually did, not the stale pre-delete classification.
+      campaignUpdateMany.mockResolvedValue({ count: 1 });
+      campaignContactFindManyTx.mockResolvedValue([{ leadId: "lead_clean" }, { leadId: "lead_raced" }]);
+      leadFindMany.mockResolvedValue([
+        { id: "lead_clean", name: "Clean", phoneNumber: "+15551110005", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 1 } },
+        { id: "lead_raced", name: "Raced", phoneNumber: "+15551110006", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 1 } },
+      ]);
+      campaignFindUnique.mockResolvedValue({ id: "camp_1", status: "DRAFT", contacts: [] });
+      leadDeleteMany.mockResolvedValue({ count: 1 }); // only lead_clean actually matched at delete time
+
+      const result = await deleteCampaignLeads("camp_1");
+
+      expect(result).toMatchObject({ deleted: 1, skipped: 1 });
     });
 
     it("skips a lead with call history, an appointment, a follow-up, or another campaign attachment, reporting why", async () => {
@@ -428,13 +462,22 @@ describe("campaignService", () => {
         { id: "lead_in_other_campaign", name: null, phoneNumber: "+15551110004", _count: { calls: 0, appointments: 0, followUps: 0, campaignContacts: 2 } },
       ]);
       campaignFindUnique.mockResolvedValue({ id: "camp_1", status: "DRAFT", contacts: [] });
+      leadDeleteMany.mockResolvedValue({ count: 1 });
 
       const result = await deleteCampaignLeads("camp_1");
 
       expect(campaignContactDeleteMany).toHaveBeenCalledWith({
         where: { campaignId: "camp_1", leadId: { in: ["lead_clean"] } },
       });
-      expect(leadDeleteMany).toHaveBeenCalledWith({ where: { id: { in: ["lead_clean"] } } });
+      expect(leadDeleteMany).toHaveBeenCalledWith({
+        where: {
+          id: { in: ["lead_clean"] },
+          calls: { none: {} },
+          appointments: { none: {} },
+          followUps: { none: {} },
+          campaignContacts: { none: {} },
+        },
+      });
       expect(result).toMatchObject({
         deleted: 1,
         skipped: 4,

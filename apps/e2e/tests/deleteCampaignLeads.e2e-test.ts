@@ -9,10 +9,16 @@
 import request from "supertest";
 import { createApp } from "../../api/src/app";
 import { prisma, CallDirection } from "@telephony/database";
+import { dialQueue } from "@telephony/queue";
 
 const app = createApp();
 
 afterAll(async () => {
+  // Obliterate (not just close) - the "already started" test below enqueues
+  // a real dial job via POST /start; leftover jobs could otherwise bleed
+  // into a later worker-backed spec within the same --runInBand invocation.
+  await dialQueue.obliterate({ force: true });
+  await dialQueue.close();
   await prisma.$disconnect();
 });
 

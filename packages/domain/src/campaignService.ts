@@ -312,15 +312,37 @@ export async function deleteCampaignLeads(campaignId: string): Promise<DeleteCam
         reason: describeSkipReason(lead._count),
       }));
 
+    let deleted = 0;
     if (cleanLeadIds.length > 0) {
       // The contact row itself blocks lead deletion via FK (no cascade from
       // CampaignContact.lead - see schema.prisma) even for this campaign, so
       // it has to go first.
       await tx.campaignContact.deleteMany({ where: { campaignId, leadId: { in: cleanLeadIds } } });
-      await tx.lead.deleteMany({ where: { id: { in: cleanLeadIds } } });
+
+      // Re-verify cleanliness with a live relation predicate rather than
+      // trusting the _count read above: this campaign's own claim only locks
+      // *this* campaign's row, so a concurrent addContactsToCampaign() on a
+      // DIFFERENT draft campaign could attach one of these leads (or a call/
+      // appointment/follow-up could land on it) in the window between that
+      // read and this delete. A stale id list would then hit that lead's
+      // still-live FK and fail the whole deleteMany. Since this campaign's
+      // own contact row was just removed above, a lead that's still
+      // genuinely clean now has zero campaignContacts left, so this
+      // predicate only ever deletes leads that are clean *at delete time* -
+      // anything that raced in is simply left alone, not erroring the batch.
+      const result = await tx.lead.deleteMany({
+        where: {
+          id: { in: cleanLeadIds },
+          calls: { none: {} },
+          appointments: { none: {} },
+          followUps: { none: {} },
+          campaignContacts: { none: {} },
+        },
+      });
+      deleted = result.count;
     }
 
-    return { deleted: cleanLeadIds.length, skipped: skippedLeads.length, skippedLeads };
+    return { deleted, skipped: leadIds.length - deleted, skippedLeads };
   });
 
   if (!outcome) return null;
